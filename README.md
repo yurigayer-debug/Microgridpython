@@ -57,6 +57,14 @@ Um script em Octave para a simulação e otimização tecno-econômica de micror
 
 -----
 
+## Aplicação web com PySAM (novo)
+
+A pasta [`webapp/`](webapp/README.md) contém uma aplicação web local que simula **inversores híbridos com
+bateria e painéis solares** usando o NREL PySAM, com tarifa brasileira (Lei 14.300). Para executar:
+`cd webapp && ./run.sh` e abrir http://127.0.0.1:8000.
+
+-----
+
 ### English
 
 Aqui está a tradução técnica para Inglês (EUA), adequada para um arquivo `README.md` (GitHub) ou documentação técnica.
