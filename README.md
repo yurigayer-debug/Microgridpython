@@ -64,6 +64,11 @@ A pasta [`webapp/`](webapp/README.md) contém uma aplicação web local (React +
 modo off-grid com gerador e otimização comparável a este script Octave.
 Para executar: `cd webapp && ./run.sh` e abrir http://127.0.0.1:8000.
 
+**Testar sem instalar nada:** [![Abrir no GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/yurigayer-debug/microgridpython?quickstart=1)
+
+Clique no botão, aguarde a criação do ambiente (alguns minutos na primeira vez) e o simulador abre sozinho numa
+aba do navegador (porta 8000). Se não abrir, use a aba *Ports* do Codespaces.
+
 -----
 
 ### English

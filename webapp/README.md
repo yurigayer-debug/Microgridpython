@@ -23,6 +23,16 @@ Inclui:
 
 ## Como executar
 
+### Testar no navegador (GitHub Codespaces)
+
+[![Abrir no GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/yurigayer-debug/microgridpython?quickstart=1)
+
+O Codespaces cria um ambiente na nuvem com Python e Node, instala as dependências, compila a interface e inicia o
+simulador na porta 8000. A primeira criação leva alguns minutos; depois a aba do simulador abre sozinha (ou
+pela aba *Ports*). Os scripts ficam em `.devcontainer/` na raiz do repositório. Lembre de parar o Codespace quando
+terminar, para não consumir a cota gratuita.
+
+
 ### Execução local (Python + Node)
 
 Requisitos: **Python 3.10+** e **Node.js 18+**, este último só para compilar a interface.
