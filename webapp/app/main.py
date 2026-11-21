@@ -13,11 +13,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import engine, load_profiles, report, weather
+from . import engine, load_profiles, optimizer, report, weather
 from .schemas import SimulationInput, form_schema
 
 BASE = Path(__file__).resolve().parent
@@ -70,25 +70,27 @@ def _load_reply(load: np.ndarray, fonte: str) -> dict:
 
 
 # ------------------------------------------------------------------- páginas e esquema
+FRONTEND = BASE.parent / "frontend" / "dist"
+SEM_FRONTEND = """<!doctype html><meta charset="utf-8"><title>Simulador Híbrido PySAM</title>
+<body style="font-family:system-ui;max-width:640px;margin:40px auto;padding:0 16px;line-height:1.5">
+<h1>Interface não compilada</h1>
+<p>A API está no ar, mas a interface React ainda não foi compilada. Na pasta <code>webapp/frontend</code> execute:</p>
+<pre>npm install
+npm run build</pre>
+<p>ou use <code>./run.sh</code> / <code>docker compose up</code>, que fazem isso automaticamente.
+A documentação da API está em <a href="/docs">/docs</a>.</p></body>"""
+
+
 @app.get("/", include_in_schema=False)
 def index():
-    return FileResponse(BASE / "static" / "index.html")
+    page = FRONTEND / "index.html"
+    if page.exists():
+        return FileResponse(page)
+    return HTMLResponse(SEM_FRONTEND)
 
 
-@app.get("/vendor/plotly.min.js", include_in_schema=False)
-def plotly_js():
-    try:
-        import plotly  # noqa: PLC0415
-
-        p = Path(plotly.__file__).parent / "package_data" / "plotly.min.js"
-        if p.exists():
-            return FileResponse(p, media_type="application/javascript")
-    except ImportError:
-        pass
-    return RedirectResponse("https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js")
-
-
-app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
+if (FRONTEND / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND / "assets"), name="assets")
 
 
 @app.get("/api/esquema")
@@ -204,7 +206,8 @@ def simular(inp: SimulationInput):
 @app.post("/api/validar")
 def validar(inp: SimulationInput):
     w = WEATHER.get(inp.weather_id) if inp.weather_id else None
-    return {"validacao": engine.validate_design(inp, w)}
+    load = LOADS.get(inp.load_id) if inp.load_id else None
+    return {"validacao": engine.validate_design(inp, w, load)}
 
 
 def _result(rid: str):
@@ -237,6 +240,58 @@ def export_entradas(rid: str):
     inp, _ = _result(rid)
     return Response(inp.model_dump_json(indent=2), media_type="application/json",
                     headers={"Content-Disposition": f'attachment; filename="entradas_{rid}.json"'})
+
+
+# ------------------------------------------------------------------- otimização (F6)
+JOBS: dict[str, optimizer.Job] = {}
+
+
+@app.post("/api/otimizar")
+def otimizar(req: optimizer.OtimizacaoReq):
+    w = WEATHER.get(req.base.weather_id)
+    load = LOADS.get(req.base.load_id)
+    if any(j.status in ("na_fila", "executando") for j in JOBS.values()):
+        raise HTTPException(409, "Já existe uma otimização em execução. Aguarde ou cancele.")
+    job = optimizer.Job(req, w, load)
+    if job.total == 0:
+        raise HTTPException(400, "Nenhuma combinação para simular.")
+    if job.total > 225:
+        raise HTTPException(400, f"{job.total} combinações: reduza a grade (máx. 225).")
+    JOBS[job.id] = job
+    while len(JOBS) > 5:
+        JOBS.pop(next(iter(JOBS)))
+    job.start()
+    return job.ranking()
+
+
+@app.get("/api/otimizar/{jid}")
+def otimizar_status(jid: str):
+    if jid not in JOBS:
+        raise HTTPException(404, "Otimização não encontrada.")
+    return JOBS[jid].ranking()
+
+
+@app.post("/api/otimizar/{jid}/cancelar")
+def otimizar_cancelar(jid: str):
+    if jid not in JOBS:
+        raise HTTPException(404, "Otimização não encontrada.")
+    JOBS[jid].cancel()
+    return {"ok": True}
+
+
+@app.get("/api/otimizar/{jid}/resultados.csv")
+def otimizar_csv(jid: str):
+    if jid not in JOBS:
+        raise HTTPException(404, "Otimização não encontrada.")
+    return Response(JOBS[jid].to_csv(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="otimizacao_{jid}.csv"'})
+
+
+@app.get("/api/octave/{modo}")
+def octave(modo: str):
+    if modo not in ("on_grid", "off_grid"):
+        raise HTTPException(400, "Modo deve ser on_grid ou off_grid.")
+    return {"modo": modo, "linhas": optimizer.read_octave(REPO_CSV.parent, modo)}
 
 
 def main():  # pragma: no cover

@@ -25,6 +25,8 @@ HOURLY_LABELS = {
     "poa": "Irradiancia_POA_W_m2",
     "temp_celula": "Temp_celula_C",
     "queda_rede": "Queda_rede(0/1)",
+    "gerador": "Gerador_para_carga_kW",
+    "nao_atendida": "Carga_nao_atendida_kW",
 }
 
 
@@ -42,7 +44,7 @@ def cashflow_csv(result: dict) -> str:
     f = result["fluxo"]
     cols = [("ano", "Ano"), ("energia_entregue_kwh", "Energia_entregue_kWh"), ("fatura_sem", "Fatura_sem_sistema_R$"),
             ("fatura_com", "Fatura_com_sistema_R$"), ("economia", "Economia_R$"), ("percentual_fio_b", "Fio_B_%"),
-            ("fio_b", "Fio_B_pago_R$"), ("om", "O&M_R$"), ("reposicao_bateria", "Reposicao_bateria_R$"),
+            ("fio_b", "Fio_B_pago_R$"), ("om", "O&M_R$"), ("custo_gerador", "Gerador_R$"), ("reposicao_bateria", "Reposicao_bateria_R$"),
             ("fluxo_caixa", "Fluxo_caixa_R$"), ("acumulado", "Acumulado_R$"),
             ("acumulado_descontado", "Acumulado_descontado_R$"), ("capacidade_bateria_pct", "Capacidade_bateria_%")]
     buf = io.StringIO()
@@ -103,14 +105,27 @@ def dossie(inp: SimulationInput, result: dict) -> str:
           f" | Payback descontado: {_fmt(k['payback_descontado_anos'], 1)} anos",
           f"  LCOE real: R$ {_fmt(k['lcoe_real_rs_kwh'], 4)}/kWh | LCOE nominal: R$ "
           f"{_fmt(k['lcoe_nominal_rs_kwh'], 4)}/kWh | LCOS real: R$ {_fmt(k['lcos_real_rs_kwh'], 4)}/kWh"]
+    L += ["", "--- CUSTO PRESENTE LÍQUIDO (TERMOS REAIS) ---",
+          f"  Modo: {'OFF-GRID' if k.get('modo') == 'off_grid' else 'ON-GRID'} | Referência: {k.get('referencia')}",
+          f"  NPC do sistema: R$ {_fmt(k.get('npc_rs'), 0)} | NPC da referência: R$ {_fmt(k.get('ref_npc_rs'), 0)}",
+          f"  Custo nivelado de atendimento: R$ {_fmt(k.get('lcoe_atendimento_rs_kwh'), 4)}/kWh | referência: R$ "
+          f"{_fmt(k.get('ref_lcoe_rs_kwh'), 4)}/kWh",
+          f"  Carga atendida: {_fmt(k.get('atendimento_pct'))} % | Não atendida: {_fmt(k.get('nao_atendida_ano1_kwh'), 1)} "
+          f"kWh | Fração renovável: {_fmt(k.get('fracao_renovavel_pct'), 1)} % | Autonomia: {_fmt(k.get('autonomia_h'), 1)} h"]
+    if (k.get("gerador_energia_ano1_kwh") or 0) > 0 or k.get("modo") == "off_grid":
+        L += [f"  Gerador: {_fmt(k.get('gerador_energia_ano1_kwh'), 0)} kWh/ano | {_fmt(k.get('gerador_horas_ano1'), 0)} h | "
+              f"{_fmt(k.get('gerador_litros_ano1'), 0)} L | R$ {_fmt(k.get('gerador_custo_ano1_rs'), 0)}/ano | "
+              f"substituições: {k.get('gerador_substituicoes')}",
+              f"  FV não aproveitada (off-grid): {_fmt(k.get('fv_nao_aproveitada_ano1_kwh'), 0)} kWh"]
     if result.get("backup"):
         b = result["backup"]
         L += ["", "--- BACKUP (QUEDAS DE REDE) ---",
               f"  Horas de queda: {b['horas_queda']} | Carga crítica: {_fmt(b['carga_critica_kwh'])} kWh | "
               f"Não atendida: {_fmt(b['nao_atendida_kwh'])} kWh | Atendida: {_fmt(b['atendida_pct'], 1)} %"]
-    L += ["", "--- FATURAMENTO MENSAL (ANO 1) ---",
-          f"  {'Mês':<5}{'Rede kWh':>10}{'Injet. kWh':>12}{'Comp. kWh':>11}{'Créd. kWh':>11}{'Fio B R$':>10}"
-          f"{'Com sist. R$':>14}{'Sem sist. R$':>14}"]
+    if result["tarifa_mensal_ano1"]:
+        L += ["", "--- FATURAMENTO MENSAL (ANO 1) ---",
+              f"  {'Mês':<5}{'Rede kWh':>10}{'Injet. kWh':>12}{'Comp. kWh':>11}{'Créd. kWh':>11}{'Fio B R$':>10}"
+              f"{'Com sist. R$':>14}{'Sem sist. R$':>14}"]
     for r in result["tarifa_mensal_ano1"]:
         L.append(f"  {r['mes']:<5}{r['consumo_rede_kwh']:>10.0f}{r['injetado_kwh']:>12.0f}{r['compensado_kwh']:>11.0f}"
                  f"{r['credito_acumulado_kwh']:>11.0f}{r['fio_b_rs']:>10.2f}{r['fatura_com_sistema_rs']:>14.2f}"

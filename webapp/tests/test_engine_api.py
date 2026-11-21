@@ -104,3 +104,66 @@ def test_pvgis_converte_utc_para_hora_local(monkeypatch):
     w = weather.from_pvgis(-31.77, -52.34)
     assert w.tz == -3 and w.elev == 7.0
     assert w.ghi[12] == 800.0 and w.ghi.sum() == 800.0
+
+
+def test_off_grid_com_gerador(dados):
+    w, load = dados
+    inp = SimulationInput()
+    inp.operacao.modo = "off_grid"
+    inp.gerador.habilitado = True
+    inp.gerador.potencia_kw = 3
+    inp.financeiro.anos_analise = 10
+    r = engine.run(inp, w, load)
+    assert r["ok"]
+    k = r["kpis"]
+    assert k["importado_rede_kwh"] == 0 and k["exportado_rede_kwh"] == 0
+    assert k["gerador_energia_ano1_kwh"] > 0
+    assert k["atendimento_pct"] > 95
+    assert k["lcoe_atendimento_rs_kwh"] < k["ref_lcoe_rs_kwh"]  # FV+bateria mais barato que só diesel
+    assert len(r["horario"]["gerador"]) == 8760
+
+
+def test_off_grid_sem_bateria_e_erro(dados):
+    inp = SimulationInput()
+    inp.operacao.modo = "off_grid"
+    inp.bateria.habilitada = False
+    assert any(m["nivel"] == "erro" for m in engine.validate_design(inp, dados[0]))
+
+
+def test_vpl_npc_confere_com_cashloan(dados):
+    w, load = dados
+    inp = SimulationInput()
+    inp.financeiro.anos_analise = 10
+    r = engine.run(inp, w, load)
+    k = r["kpis"]
+    assert k["ref_npc_rs"] - k["npc_rs"] == pytest.approx(k["vpl_rs"], abs=5)
+
+
+def test_dossie_off_grid(dados):
+    from app import report
+
+    w, load = dados
+    inp = SimulationInput()
+    inp.operacao.modo = "off_grid"
+    inp.gerador.habilitado = True
+    inp.financeiro.anos_analise = 5
+    r = engine.run(inp, w, load)
+    txt = report.dossie(inp, r)
+    assert "OFF-GRID" in txt and "Gerador:" in txt
+    assert "Gerador_para_carga_kW" in report.hourly_csv(r)
+    assert r["kpis"]["fv_nao_aproveitada_ano1_kwh"] >= 0
+
+
+def test_clima_do_octave_simula():
+    """Perfil senoidal do Octave (irradiância fora do horário solar) deve ser saneado e simular."""
+    import pandas as pd
+    from pathlib import Path
+
+    csv = Path(__file__).resolve().parents[2] / "perfil_carga_e_solar.csv"
+    df = pd.read_csv(csv)
+    w = weather.from_ghi_series(df["Irradiacao_W_m2"].to_numpy(float), -31.77, -52.34)
+    assert w.dni.max() <= 1100
+    load = load_profiles.from_file(csv.read_bytes(), csv.name, "Carga_kW")
+    inp = SimulationInput()
+    inp.financeiro.anos_analise = 3
+    assert engine.run(inp, w, load)["ok"]

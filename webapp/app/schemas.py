@@ -27,6 +27,35 @@ class Local(BaseModel):
                       "albedo", ge=0, le=1)
 
 
+class Operacao(BaseModel):
+    modo: Literal["on_grid", "off_grid"] = F(
+        "on_grid", "Modo de operação", "",
+        "On-grid: conectado à rede (com compensação). Off-grid: sistema isolado – a rede fica indisponível o ano "
+        "todo e toda a carga é crítica; a falta de energia é coberta pelo gerador, se houver.",
+        "grid_outage / crit_load",
+        labels={"on_grid": "On-grid (conectado à rede)", "off_grid": "Off-grid (isolado)"})
+    confiabilidade_min: float = F(99.0, "Confiabilidade mínima (off-grid)", "%",
+                                  "Fração mínima da carga atendida para a solução ser viável (otimização).",
+                                  "", ge=0, le=100)
+
+
+class Gerador(BaseModel):
+    habilitado: bool = F(False, "Usar gerador a diesel (GMG)", "",
+                         "Cobre a carga não atendida pela FV+bateria (off-grid ou quedas de rede). Modelado após a "
+                         "simulação PySAM, como no microgrid_optimizer.m (não carrega a bateria).", "")
+    potencia_kw: float = F(10.0, "Potência do gerador", "kW", "", "", gt=0)
+    carga_minima: float = F(0.0, "Carga mínima de operação", "% da nominal",
+                            "Abaixo disso o gerador opera no mínimo (excedente descartado).", "", ge=0, le=100)
+    consumo_a: float = F(0.240, "Curva de consumo – coef. A", "L/kWh", "Combustível = A·E + B·P_nominal·h.", "",
+                         ge=0)
+    consumo_b: float = F(0.010, "Curva de consumo – coef. B", "L/(kW·h)", "", "", ge=0)
+    custo_kw: float = F(1700.0, "Custo do gerador", "R$/kW", "", "", ge=0)
+    om_hora: float = F(2.0, "O&M do gerador", "R$/h de operação", "", "", ge=0)
+    vida_horas: float = F(30000.0, "Vida útil do gerador", "h", "", "", gt=0)
+    preco_diesel: float = F(6.50, "Preço do diesel", "R$/L", "", "", ge=0)
+    reajuste_diesel_real: float = F(0.0, "Aumento real do diesel", "%/ano", "Acima da inflação.", "", ge=-10, le=20)
+
+
 class Modulo(BaseModel):
     vmp: float = F(41.96, "Vmp (STC)", "V", "Tensão de máxima potência do datasheet.", "sixpar_vmp", gt=0)
     imp: float = F(13.11, "Imp (STC)", "A", "Corrente de máxima potência.", "sixpar_imp", gt=0)
@@ -203,24 +232,28 @@ class SimulationInput(BaseModel):
     weather_id: str = Field("", description="Identificador do clima carregado (/api/clima/*).")
     load_id: str = Field("", description="Identificador da carga carregada (/api/carga/*).")
     local: Local = Local()
+    operacao: Operacao = Operacao()
     modulo: Modulo = Modulo()
     arranjo: Arranjo = Arranjo()
     inversor: InversorHibrido = InversorHibrido()
     bateria: Bateria = Bateria()
     despacho: Despacho = Despacho()
     backup: Backup = Backup()
+    gerador: Gerador = Gerador()
     tarifa: Tarifa = Tarifa()
     financeiro: Financeiro = Financeiro()
 
 
 GROUPS = [
     ("local", "Local", Local),
+    ("operacao", "Operação", Operacao),
     ("modulo", "Módulo FV", Modulo),
     ("arranjo", "Arranjo FV", Arranjo),
     ("inversor", "Inversor híbrido", InversorHibrido),
     ("bateria", "Bateria", Bateria),
     ("despacho", "Despacho", Despacho),
     ("backup", "Backup", Backup),
+    ("gerador", "Gerador", Gerador),
     ("tarifa", "Tarifa", Tarifa),
     ("financeiro", "Financeiro", Financeiro),
 ]

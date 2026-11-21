@@ -1,0 +1,14 @@
+# Uso:  docker compose -f webapp/docker-compose.yml up --build      (a partir da raiz do repositório)
+#       ou, dentro de webapp/:  docker compose up --build
+# Depois abra http://127.0.0.1:8000
+services:
+  simulador:
+    build:
+      context: ..
+      dockerfile: webapp/Dockerfile
+    image: simulador-hibrido-pysam:latest
+    ports:
+      - "127.0.0.1:8000:8000"   # só acesso local; troque para "8000:8000" para expor na rede
+    environment:
+      - TZ=America/Sao_Paulo
+    restart: unless-stopped

@@ -16,6 +16,7 @@
   --s-rede: #2a78d6;
   --s-export: #eb6834;
   --s-gridbat: #6250d6;
+  --s-gerador: #e87ba4;
   --s-neutral: #8a8984;
   /* status */
   --good: #0ca30c;
@@ -42,6 +43,7 @@
     --s-rede: #3987e5;
     --s-export: #d95926;
     --s-gridbat: #9085e9;
+    --s-gerador: #d55181;
     --s-neutral: #8f8e88;
     --good-ink: #4fc44f;
     --warning-ink: #fab219;
@@ -64,6 +66,7 @@
   --s-rede: #3987e5;
   --s-export: #d95926;
   --s-gridbat: #9085e9;
+  --s-gerador: #d55181;
   --s-neutral: #8f8e88;
   --good-ink: #4fc44f;
   --warning-ink: #fab219;
@@ -183,3 +186,18 @@ footer { text-align: center; color: var(--text-muted); font-size: 12px; padding:
   .card { padding: 14px 16px; }
   .grid2 { grid-template-columns: 1fr; }
 }
+
+/* ---------- React: navegação, progresso, otimização ---------- */
+.app-nav { display: flex; gap: 4px; }
+.app-nav button { background: transparent; border-color: transparent; color: var(--text-secondary); }
+.app-nav button.on { background: var(--surface-2); border-color: var(--border); color: var(--text-primary); font-weight: 600; }
+.progress { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; margin: 8px 0; }
+.progress > div { height: 100%; background: var(--accent); transition: width .4s; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px 18px; }
+tr.best td { font-weight: 650; }
+tr.best td:first-child::before { content: "★ "; color: var(--accent); }
+tr.inviavel td { color: var(--text-muted); }
+td button.link { padding: 2px 8px; font-size: 12px; }
+.note { font-size: 13px; color: var(--text-secondary); background: var(--surface-2); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+.badge { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--border); color: var(--text-secondary); margin-left: 6px; }
+.chart.tall { height: 420px; }

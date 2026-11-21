@@ -95,14 +95,25 @@ def _index(tz: float) -> pd.DatetimeIndex:
     return pd.date_range("2019-01-01", periods=HOURS, freq="h", tz=tzname)
 
 
-def decompose_ghi(ghi: np.ndarray, lat: float, lon: float, tz: float) -> tuple[np.ndarray, np.ndarray]:
-    """Separa GHI em DNI e DHI pelo modelo de Erbs (pvlib), usando o meio da hora."""
+def decompose_ghi(ghi: np.ndarray, lat: float, lon: float, tz: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Separa GHI em DNI e DHI pelo modelo de Erbs (pvlib), usando o meio da hora.
+
+    Também saneia a série: zera GHI com o sol abaixo do horizonte (perfis sintéticos
+    como o senoidal do Octave têm irradiância em horas sem sol), e perto do horizonte
+    (zênite > 85°) trata toda a irradiância como difusa, evitando DNI irreais que
+    fazem o SAM abortar. Retorna (ghi, dni, dhi).
+    """
     idx = _index(tz) + pd.Timedelta("30min")
     sp = pvlib.solarposition.get_solarposition(idx, lat, lon)
-    out = pvlib.irradiance.erbs(np.asarray(ghi, float), sp["zenith"].values, idx.dayofyear.values)
+    zen = sp["zenith"].to_numpy(float)
+    ghi = np.where(zen < 90, np.clip(np.asarray(ghi, float), 0, None), 0.0)
+    out = pvlib.irradiance.erbs(ghi, zen, idx.dayofyear.values)
     dni = np.nan_to_num(np.asarray(out["dni"], float))
     dhi = np.nan_to_num(np.asarray(out["dhi"], float))
-    return dni, dhi
+    baixo = zen > 85
+    dni = np.where(baixo, 0.0, np.clip(dni, 0, 1100.0))
+    dhi = np.where(baixo, ghi, np.clip(ghi - dni * np.cos(np.radians(zen)), 0, None))
+    return ghi, dni, dhi
 
 
 def _fit_8760(df: pd.DataFrame) -> pd.DataFrame:
@@ -236,7 +247,7 @@ def from_file(content: bytes, filename: str, lat: float | None, lon: float | Non
         dhi = pd.to_numeric(df[cd], errors="coerce").fillna(0).to_numpy(float)
         note = ""
     else:
-        dni, dhi = decompose_ghi(ghi, lat, lon, tz)
+        ghi, dni, dhi = decompose_ghi(ghi, lat, lon, tz)
         note = " (DNI/DHI por Erbs)"
     if ct is not None:
         tdry = pd.to_numeric(df[ct], errors="coerce").to_numpy(float)
@@ -290,7 +301,7 @@ def synthetic(lat: float, lon: float, ghi_monthly: list[float], temp_monthly: li
         s = ghi[sel].sum()
         if s > 0:
             ghi[sel] *= target / s
-    dni, dhi = decompose_ghi(ghi, lat, lon, tz)
+    ghi, dni, dhi = decompose_ghi(ghi, lat, lon, tz)
     tdry = _synthetic_temperature(temp_monthly, ghi)
     return WeatherData(lat=lat, lon=lon, tz=tz, elev=elev, ghi=ghi, dni=dni, dhi=dhi, tdry=tdry,
                        wspd=np.full(HOURS, 2.5), source="Sintético (médias mensais de GHI)")
@@ -299,8 +310,7 @@ def synthetic(lat: float, lon: float, ghi_monthly: list[float], temp_monthly: li
 def from_ghi_series(ghi: np.ndarray, lat: float, lon: float, tz: float | None = None,
                     temp_monthly: list[float] | None = None, source: str = "Série de GHI") -> WeatherData:
     tz = float(round(lon / 15.0)) if tz is None else float(tz)
-    ghi = np.asarray(ghi, float)
-    dni, dhi = decompose_ghi(ghi, lat, lon, tz)
+    ghi, dni, dhi = decompose_ghi(np.asarray(ghi, float), lat, lon, tz)
     tdry = _synthetic_temperature(temp_monthly or TEMP_MENSAL_PELOTAS, ghi)
     return WeatherData(lat=lat, lon=lon, tz=tz, elev=0.0, ghi=ghi, dni=dni, dhi=dhi, tdry=tdry,
                        wspd=np.full(HOURS, 2.5), source=source + " (DNI/DHI por Erbs, temperatura sintética)")

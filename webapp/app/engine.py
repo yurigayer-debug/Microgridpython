@@ -20,7 +20,7 @@ import PySAM.Pvsamv1 as Pvsamv1
 import PySAM.Utilityrate5 as Utilityrate5
 from PySAM.PySSC import PySSC
 
-from . import tariff_br
+from . import genset_finance, tariff_br
 from .schemas import SimulationInput
 from .weather import WeatherData
 
@@ -74,7 +74,8 @@ def parse_outages(text: str) -> np.ndarray:
     return out
 
 
-def validate_design(inp: SimulationInput, weather: WeatherData | None) -> list[dict]:
+def validate_design(inp: SimulationInput, weather: WeatherData | None,
+                    load_kw: np.ndarray | None = None) -> list[dict]:
     """Verificações elétricas de projeto (string × inversor × bateria)."""
     mod, arr, inv, bat = inp.modulo, inp.arranjo, inp.inversor, inp.bateria
     msgs = []
@@ -127,6 +128,21 @@ def validate_design(inp: SimulationInput, weather: WeatherData | None) -> list[d
             add("erro", "SOC mínimo deve ser menor que o SOC máximo.")
         if bat.quimica == "leadacid" and bat.soc_min < 40:
             add("alerta", "Chumbo-ácido com SOC mínimo < 40% (DoD > 60%) reduz muito a vida útil.")
+    off = inp.operacao.modo == "off_grid"
+    if off and not bat.habilitada:
+        add("erro", "O modo off-grid exige bateria: o inversor híbrido precisa dela para formar a rede isolada.")
+    if load_kw is not None and len(load_kw):
+        pico = float(np.max(load_kw))
+        if off and pac < pico:
+            add("alerta", f"Pico de carga {pico:.1f} kW maior que a potência do inversor ({pac:.1f} kW): parte da "
+                          "carga não será atendida pelo inversor.")
+        if inp.gerador.habilitado and (off or inp.backup.simular_quedas):
+            alvo = pico if off else pico * inp.backup.fracao_carga_critica / 100.0
+            if inp.gerador.potencia_kw < alvo:
+                add("alerta", f"Gerador de {inp.gerador.potencia_kw:.1f} kW menor que o pico a atender "
+                              f"({alvo:.1f} kW).")
+    if off and not inp.gerador.habilitado:
+        add("alerta", "Off-grid sem gerador: a carga não atendida pela FV+bateria fica sem suprimento.")
     return msgs
 
 
@@ -215,9 +231,14 @@ def build_pvsam(inp: SimulationInput, weather: WeatherData, load_kw: np.ndarray)
     m.Load.load = [float(x) for x in load_kw]
     m.Load.load_escalation = [0.0]
     bk = inp.backup
-    outage = parse_outages(bk.quedas) if bk.simular_quedas else np.zeros(HOURS, dtype=int)
+    if inp.operacao.modo == "off_grid":
+        outage = np.ones(HOURS, dtype=int)
+        crit_frac = 1.0
+    else:
+        outage = parse_outages(bk.quedas) if bk.simular_quedas else np.zeros(HOURS, dtype=int)
+        crit_frac = bk.fracao_carga_critica / 100.0
     m.Load.grid_outage = [int(x) for x in outage]
-    m.Load.crit_load = [float(x) * bk.fracao_carga_critica / 100.0 for x in load_kw]
+    m.Load.crit_load = [float(x) * crit_frac for x in load_kw]
     m.Load.run_resiliency_calcs = 0
 
     # Limite de injeção
@@ -311,11 +332,13 @@ def _r(x, n=2):
 
 def run(inp: SimulationInput, weather: WeatherData, load_kw: np.ndarray) -> dict:
     t0 = time.time()
-    msgs = validate_design(inp, weather)
+    msgs = validate_design(inp, weather, load_kw)
     if any(m["nivel"] == "erro" for m in msgs):
         return {"ok": False, "validacao": msgs, "erro": "O projeto tem erros de dimensionamento."}
 
     N = inp.financeiro.anos_analise
+    off = inp.operacao.modo == "off_grid"
+    fn = inp.financeiro
     m = build_pvsam(inp, weather, load_kw)
     try:
         m.execute()
@@ -340,28 +363,59 @@ def run(inp: SimulationInput, weather: WeatherData, load_kw: np.ndarray) -> dict
         except Exception:  # noqa: BLE001
             return zeros
 
-    load_y = np.tile(np.asarray(load_kw, float), (N, 1))
+    load = np.asarray(load_kw, float)
+    load_y = np.tile(load, (N, 1))
     outage = np.asarray(m.Load.grid_outage, float)
     if outage.size != HOURS:
         outage = np.zeros(HOURS)
-    grid_to_load = Y("grid_to_load") if batt_on else None
+    crit = load * (1.0 if off else inp.backup.fracao_carga_critica / 100.0)
+
     if batt_on:
+        grid_to_load = Y("grid_to_load")
         imp = grid_to_load + Y("grid_to_batt")
         exp = Y("system_to_grid") + Y("batt_to_grid")
+        unmet = Y("crit_load_unmet") * outage
     else:
         gen = Y("gen")
         net = load_y * (1 - outage) - gen
         imp = np.clip(net, 0, None)
-        exp = np.clip(-net, 0, None)
+        exp = np.clip(-net, 0, None) * (1 - outage)
         grid_to_load = imp
-    carga_sem = load_y * (1 - outage)
+        unmet = np.tile(crit * outage, (N, 1))  # sem bateria o inversor não opera ilhado
+    if off:
+        imp = exp = grid_to_load = zeros
 
-    bills = tariff_br.annual_bills(imp, exp, carga_sem, inp.tarifa)
+    # ---------------- gerador (pós-processamento)
+    gs = genset_finance.dispatch(unmet, inp.gerador)
+    servida = load_y * (1 - outage) + (crit * outage - gs["residual"])
+
+    # ---------------- faturamento
+    if off:
+        z = [0.0] * N
+        bills = {"fatura_com_sistema": z, "fatura_sem_sistema": z, "economia": z, "fio_b_pago": z,
+                 "energia_compensada_kwh": z, "credito_final_kwh": z, "mensal_ano1": [], "percentual_fio_b": z}
+    else:
+        bills = tariff_br.annual_bills(imp, exp, load_y * (1 - outage), inp.tarifa)
+
+    # ---------------- custos
+    pdc = float(m.SystemDesign.system_capacity)
+    bat_kwh = float(out.batt_bank_installed_capacity) if batt_on else 0.0
+    capex_fv = pdc * fn.custo_fv_kwp
+    capex_inv = fn.custo_inversor * inp.inversor.quantidade
+    capex_bat = inp.bateria.capacidade_kwh * fn.custo_bateria_kwh if batt_on else 0.0
+    capex_gen = inp.gerador.potencia_kw * inp.gerador.custo_kw if inp.gerador.habilitado else 0.0
+    capex = capex_fv + capex_inv + capex_bat + capex_gen + fn.custo_fixo
+    escal = (1 + fn.inflacao / 100.0) ** np.arange(N)  # convenção SAM: ano 1 sem correção
+    custo_gerador = genset_finance.genset_costs_nominal(gs, inp.gerador, fn.inflacao)
+    om_fixed = fn.om_fixo_ano * escal + custo_gerador
+    if 0 < fn.ano_troca_inversor <= N:
+        om_fixed[fn.ano_troca_inversor - 1] += capex_inv * escal[fn.ano_troca_inversor - 1]
+
+    ref = genset_finance.diesel_only_reference(load_y, inp.gerador, fn.inflacao) if off else None
 
     # ---------------- Cashloan
     f = _fill_defaults(Cashloan.from_existing(m), Cashloan)
     fp = f.FinancialParameters
-    fn = inp.financeiro
     fp.analysis_period = N
     fp.federal_tax_rate = [0.0]
     fp.state_tax_rate = [0.0]
@@ -375,10 +429,8 @@ def run(inp: SimulationInput, weather: WeatherData, load_kw: np.ndarray) -> dict
     fp.market = 0
     fp.mortgage = 0
     fp.salvage_percentage = 0.0
-    pdc = float(m.SystemDesign.system_capacity)
     fp.system_capacity = pdc
-    ti = f.TaxCreditIncentives
-    for k, v in ti.export().items():
+    for k, v in f.TaxCreditIncentives.export().items():
         if "percent" in k and "deprbas" not in k and "maxvalue" not in k:
             f.value(k, [0.0] if isinstance(v, (list, tuple)) else 0.0)
         if k.endswith("_amount") and isinstance(v, (list, tuple)):
@@ -386,20 +438,11 @@ def run(inp: SimulationInput, weather: WeatherData, load_kw: np.ndarray) -> dict
     for k, v in f.PaymentIncentives.export().items():
         if k.endswith("_amount") or k.endswith("_percent"):
             f.value(k, [0.0] if isinstance(v, (list, tuple)) else 0.0)
-
-    bat_kwh = float(out.batt_bank_installed_capacity) if batt_on else 0.0
-    capex_fv = pdc * fn.custo_fv_kwp
-    capex_inv = fn.custo_inversor * inp.inversor.quantidade
-    capex_bat = inp.bateria.capacidade_kwh * fn.custo_bateria_kwh if batt_on else 0.0
-    capex = capex_fv + capex_inv + capex_bat + fn.custo_fixo
     sc = f.SystemCosts
     sc.total_installed_cost = capex
     sc.om_capacity = [fn.om_fv_kwp_ano]
     sc.om_capacity_escal = 0.0
-    om_fixed = [fn.om_fixo_ano] * N
-    if 0 < fn.ano_troca_inversor <= N:
-        om_fixed[fn.ano_troca_inversor - 1] += capex_inv
-    sc.om_fixed = om_fixed
+    sc.om_fixed = [float(x) for x in om_fixed]  # vetor anual: o SAM não corrige pela inflação
     sc.om_fixed_escal = 0.0
     sc.om_production = [0.0]
     sc.om_batt_capacity_cost = [fn.om_bateria_kwh_ano if batt_on else 0.0]
@@ -411,7 +454,8 @@ def run(inp: SimulationInput, weather: WeatherData, load_kw: np.ndarray) -> dict
     f.BatterySystem.battery_per_kWh = fn.custo_bateria_kwh
     f.LCOS.battery_total_cost_lcos = capex_bat
     f.ElectricityRates.rate_escalation = [0.0]
-    f.SystemOutput.annual_energy_value = [0.0] + [float(x) for x in bills["economia"]]
+    valor = ref["custos_nominais"] if off else np.asarray(bills["economia"])
+    f.SystemOutput.annual_energy_value = [0.0] + [float(x) for x in valor]
     # Contas (saídas do Utilityrate5 compartilhadas na mesma tabela de dados) → tarifa brasileira
     _set_array(f, "utility_bill_w_sys", [0.0] + [float(x) for x in bills["fatura_com_sistema"]])
     _set_array(f, "utility_bill_wo_sys", [0.0] + [float(x) for x in bills["fatura_sem_sistema"]])
@@ -421,13 +465,47 @@ def run(inp: SimulationInput, weather: WeatherData, load_kw: np.ndarray) -> dict
         raise SimulationError(f"Erro no Cashloan: {e}") from e
     fo = f.Outputs
 
+    # ---------------- custo presente líquido (termos reais)
+    opex = np.asarray(fo.cf_operating_expenses, float)[1 : N + 1]
+    custos_sis = opex + np.asarray(bills["fatura_com_sistema"], float)
+    npc_sis = genset_finance.npc(capex, custos_sis, fn.taxa_desconto_real, fn.inflacao)
+    servida_ano = servida.sum(axis=1)
+    fin = {
+        "npc_rs": npc_sis,
+        "lcoe_atendimento_rs_kwh": genset_finance.levelized(npc_sis, servida_ano, fn.taxa_desconto_real),
+    }
+    if off:
+        npc_ref = genset_finance.npc(ref["capex"], ref["custos_nominais"], fn.taxa_desconto_real, fn.inflacao)
+        fluxos = [-(capex - ref["capex"])] + list(ref["custos_nominais"] - custos_sis)
+        taxa_nom = (1 + fn.taxa_desconto_real / 100) * (1 + fn.inflacao / 100) - 1
+        fin.update({
+            "referencia": "só gerador a diesel",
+            "ref_potencia_kw": ref["potencia_kw"],
+            "ref_npc_rs": npc_ref,
+            "ref_lcoe_rs_kwh": genset_finance.levelized(npc_ref, load_y.sum(axis=1), fn.taxa_desconto_real),
+            "ref_litros_ano1": ref["litros_ano1"],
+            "vpl_rs": npc_ref - npc_sis,
+            "tir_pct": genset_finance.irr(fluxos),
+            "payback_anos": genset_finance.payback(fluxos),
+            "payback_descontado_anos": genset_finance.payback(fluxos, taxa_nom),
+            "fluxos": fluxos,
+        })
+    else:
+        npc_ref = genset_finance.npc(0.0, np.asarray(bills["fatura_sem_sistema"], float), fn.taxa_desconto_real,
+                                     fn.inflacao)
+        fin.update({"referencia": "sem sistema (só rede)", "ref_npc_rs": npc_ref,
+                    "ref_lcoe_rs_kwh": genset_finance.levelized(npc_ref, (load_y * (1 - outage)).sum(axis=1),
+                                                                fn.taxa_desconto_real)})
+
+    ctx = {"gs": gs, "servida": servida, "crit": crit, "unmet": unmet, "fin": fin, "off": off,
+           "custo_gerador": custo_gerador}
     return _collect(inp, weather, load_kw, m, out, fo, bills, imp, exp, grid_to_load, outage, capex,
-                    {"fv": capex_fv, "inversor": capex_inv, "bateria": capex_bat, "fixo": fn.custo_fixo},
-                    msgs, time.time() - t0)
+                    {"fv": capex_fv, "inversor": capex_inv, "bateria": capex_bat, "gerador": capex_gen,
+                     "fixo": fn.custo_fixo}, msgs, time.time() - t0, ctx)
 
 
 def _collect(inp, weather, load_kw, m, out, fo, bills, imp, exp, grid_to_load, outage, capex, capex_parts,
-             msgs, elapsed) -> dict:
+             msgs, elapsed, ctx) -> dict:
     N = inp.financeiro.anos_analise
     batt_on = inp.bateria.habilitada
 
@@ -454,6 +532,18 @@ def _collect(inp, weather, load_kw, m, out, fo, bills, imp, exp, grid_to_load, o
         pv_to_batt = batt_to_load = batt_to_grid = grid_to_batt = soc = batt_power = np.zeros(HOURS)
     g2l = grid_to_load[0]
     imp1, exp1 = imp[0], exp[0]
+    off, gs, fin = ctx["off"], ctx["gs"], ctx["fin"]
+    gerador1 = gs["energia"][0]
+    residual1 = gs["residual"][0]
+    servida1 = ctx["servida"][0]
+    if off:
+        # sem rede, o que o SAM contabiliza como injeção é energia FV desperdiçada (curtailment)
+        curtail_h = pv_to_grid + batt_to_grid
+        pv_to_grid = np.zeros(HOURS)
+        batt_to_grid = np.zeros(HOURS)
+    else:
+        curtail_h = np.zeros(HOURS)
+    curtail = float(curtail_h.sum())
 
     month = np.repeat(np.arange(12), [d * 24 for d in (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)])
 
@@ -463,7 +553,9 @@ def _collect(inp, weather, load_kw, m, out, fo, bills, imp, exp, grid_to_load, o
     carga_total = float(load.sum())
     pv_total = float(pv_ac.sum())
     autoconsumo = (pv_total - float(pv_to_grid.sum())) / pv_total * 100 if pv_total > 0 else 0.0
-    autossuf = (1 - float(g2l.sum()) / carga_total) * 100 if carga_total > 0 else 0.0
+    renovavel = float(servida1.sum() - g2l.sum() - gerador1.sum())
+    autossuf = renovavel / carga_total * 100 if carga_total > 0 else 0.0
+    usable = inp.bateria.capacidade_kwh * (inp.bateria.soc_max - inp.bateria.soc_min) / 100.0 if batt_on else 0.0
 
     def outv(name, default=0.0):
         try:
@@ -523,12 +615,35 @@ def _collect(inp, weather, load_kw, m, out, fo, bills, imp, exp, grid_to_load, o
         "lcoe_nominal_rs_kwh": _r((fov("lcoe_nom") or 0) / 100.0, 4),
         "lcos_real_rs_kwh": _r((fov("lcos_real") or 0) / 100.0, 4) if batt_on else None,
         "taxa_desconto_nominal_pct": _r(fov("nominal_discount_rate"), 2),
+        # operação, gerador e custo presente líquido
+        "modo": inp.operacao.modo,
+        "energia_atendida_ano1_kwh": _r(servida1.sum(), 0),
+        "atendimento_pct": _r(100 * servida1.sum() / carga_total if carga_total else 100, 2),
+        "nao_atendida_ano1_kwh": _r(residual1.sum(), 1),
+        "fracao_renovavel_pct": _r(100 * renovavel / servida1.sum() if servida1.sum() else 0, 1),
+        "fv_nao_aproveitada_ano1_kwh": _r(curtail, 0),
+        "autonomia_h": _r(usable / max(1e-9, load.mean()), 1),
+        "gerador_energia_ano1_kwh": _r(gerador1.sum(), 0),
+        "gerador_horas_ano1": _r(gs["horas"][0], 0),
+        "gerador_litros_ano1": _r(gs["litros"][0], 0),
+        "gerador_custo_ano1_rs": _r(ctx["custo_gerador"][0], 0),
+        "gerador_substituicoes": int(gs["substituicoes"].sum()),
+        "npc_rs": _r(fin["npc_rs"], 0),
+        "lcoe_atendimento_rs_kwh": _r(fin["lcoe_atendimento_rs_kwh"], 4),
+        "referencia": fin["referencia"],
+        "ref_npc_rs": _r(fin["ref_npc_rs"], 0),
+        "ref_lcoe_rs_kwh": _r(fin["ref_lcoe_rs_kwh"], 4),
+        "ref_potencia_gerador_kw": _r(fin.get("ref_potencia_kw"), 1),
+        "ref_litros_ano1": _r(fin.get("ref_litros_ano1"), 0),
     }
+    if off:  # VPL/TIR/payback em relação ao cenário "só gerador"
+        for key in ("vpl_rs", "tir_pct", "payback_anos", "payback_descontado_anos"):
+            kpis[key] = _r(fin[key], 0 if key == "vpl_rs" else 2)
 
     backup = None
-    if inp.backup.simular_quedas and outage.sum() > 0:
-        crit = load * inp.backup.fracao_carga_critica / 100.0
-        unmet = h1("crit_load_unmet")
+    if not off and inp.backup.simular_quedas and outage.sum() > 0:
+        crit = ctx["crit"]
+        unmet = residual1  # após o gerador (se houver)
         crit_out = float((crit * outage).sum())
         unmet_out = float((unmet * outage).sum())
         events = []
@@ -549,6 +664,7 @@ def _collect(inp, weather, load_kw, m, out, fo, bills, imp, exp, grid_to_load, o
                 })
                 start = None
         backup = {
+            "gerador_kwh": _r(float((gerador1 * outage).sum()), 2),
             "horas_queda": int(outage.sum()),
             "carga_critica_kwh": _r(crit_out, 2),
             "nao_atendida_kwh": _r(unmet_out, 2),
@@ -598,7 +714,16 @@ def _collect(inp, weather, load_kw, m, out, fo, bills, imp, exp, grid_to_load, o
         "energia_entregue_kwh": [0.0] + [_r(x, 0) for x in annual_energy],
         "capacidade_bateria_pct": [None] + cap_pct if cap_pct else [],
         "substituicoes_bateria": replacements,
+        "custo_gerador": [0.0] + [_r(x) for x in ctx["custo_gerador"]],
+        "energia_atendida_kwh": [0.0] + [_r(x, 0) for x in ctx["servida"].sum(axis=1)],
+        "nao_atendida_kwh": [0.0] + [_r(x, 1) for x in gs["residual"].sum(axis=1)],
     }
+    if off:  # fluxo incremental em relação ao cenário "só gerador"
+        fl = np.asarray(fin["fluxos"], float)
+        taxa_nom = (1 + inp.financeiro.taxa_desconto_real / 100) * (1 + inp.financeiro.inflacao / 100) - 1
+        fluxo["fluxo_caixa"] = [_r(x) for x in fl]
+        fluxo["acumulado"] = [_r(x) for x in np.cumsum(fl)]
+        fluxo["acumulado_descontado"] = [_r(x) for x in np.cumsum(fl / (1 + taxa_nom) ** np.arange(len(fl)))]
 
     horario = {
         "carga": load,
@@ -616,6 +741,8 @@ def _collect(inp, weather, load_kw, m, out, fo, bills, imp, exp, grid_to_load, o
         "poa": h1("poa_front"),
         "temp_celula": h1("subarray1_celltemp"),
         "queda_rede": outage,
+        "gerador": gerador1,
+        "nao_atendida": residual1,
     }
     horario = {k: [round(float(x), 3) for x in v] for k, v in horario.items()}
 
@@ -630,6 +757,9 @@ def _collect(inp, weather, load_kw, m, out, fo, bills, imp, exp, grid_to_load, o
         "rede_para_bateria": monthly(grid_to_batt),
         "importado": monthly(imp1),
         "exportado": monthly(exp1),
+        "gerador": monthly(gerador1),
+        "nao_atendida": monthly(residual1),
+        "fv_nao_aproveitada": monthly(curtail_h),
     }
 
     return {
