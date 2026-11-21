@@ -19,6 +19,8 @@ Inclui:
 | F6 | Otimização FV × bateria × gerador em paralelo, mapa de calor, comparação com o Octave |
 | F7 | Scripts de execução, testes automatizados, documentação |
 
+![Resultado on-grid](docs/capturas/2_resultado_on_grid.png)
+
 ## Como executar
 
 ### Execução local (Python + Node)
