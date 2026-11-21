@@ -17,11 +17,11 @@ Inclui:
 | F4 | Interface React + Vite + TypeScript com gráficos Plotly e exportações |
 | F5 | Off-grid, backup em quedas de rede, gerador a diesel, custo presente líquido (NPC) |
 | F6 | Otimização FV × bateria × gerador em paralelo, mapa de calor, comparação com o Octave |
-| F7 | Docker, scripts de execução, testes automatizados, documentação |
+| F7 | Scripts de execução, testes automatizados, documentação |
 
 ## Como executar
 
-### Opção 1 — local (Python + Node)
+### Execução local (Python + Node)
 
 Requisitos: **Python 3.10+** e **Node.js 18+**, este último só para compilar a interface.
 
@@ -39,21 +39,6 @@ Outros comandos:
 - `./run.sh dev`: modo desenvolvimento. A API recarrega sozinha a cada alteração e o Vite serve a interface em
   http://127.0.0.1:5173.
 - `./run.sh test`: roda os testes (cerca de 1 min, pois executam o PySAM de verdade).
-
-### Opção 2 — Docker (sem instalar Python nem Node)
-
-```bash
-cd webapp
-docker compose up --build
-```
-
-Depois abra http://127.0.0.1:8000. A imagem é única e contém:
-- a interface compilada;
-- a API FastAPI e o PySAM;
-- os CSVs do Octave.
-
-Por padrão, a porta só aceita acesso local. Para expor o serviço na rede, troque `127.0.0.1:8000:8000` por
-`8000:8000` no `docker-compose.yml`.
 
 ### Instalação manual
 
@@ -196,7 +181,7 @@ webapp/
   app/report.py          dossiê .txt e CSVs
   frontend/              React + Vite + TypeScript (src/components/*)
   tests/                 pytest (tarifa, gerador, motor, API, otimização)
-  Dockerfile, docker-compose.yml, run.sh, run.bat
+  run.sh, run.bat
 ```
 
 ---
@@ -208,5 +193,5 @@ Local web app that simulates **hybrid inverters with batteries and PV**. It runs
 diesel genset, and a parallel PV × battery × genset sizing optimizer that compares its results with this
 repository's Octave tool.
 
-To run it, use `cd webapp && ./run.sh`, which needs Python 3.10+ and Node 18+, or `docker compose up --build`.
+To run it, use `cd webapp && ./run.sh`, which needs Python 3.10+ and Node 18+.
 Then open http://127.0.0.1:8000.

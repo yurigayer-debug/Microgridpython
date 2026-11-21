@@ -77,7 +77,7 @@ SEM_FRONTEND = """<!doctype html><meta charset="utf-8"><title>Simulador Híbrido
 <p>A API está no ar, mas a interface React ainda não foi compilada. Na pasta <code>webapp/frontend</code> execute:</p>
 <pre>npm install
 npm run build</pre>
-<p>ou use <code>./run.sh</code> / <code>docker compose up</code>, que fazem isso automaticamente.
+<p>ou use <code>./run.sh</code> (<code>run.bat</code> no Windows), que faz isso automaticamente.
 A documentação da API está em <a href="/docs">/docs</a>.</p></body>"""
 
 

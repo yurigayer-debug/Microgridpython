@@ -10,7 +10,7 @@ if not exist .venv (
 )
 if "%1"=="dev" goto dev
 if not exist frontend\dist\index.html (
-  where npm >nul 2>nul || (echo Node.js/npm nao encontrado. Instale Node 18+ ou use docker compose up --build & exit /b 1)
+  where npm >nul 2>nul || (echo Node.js/npm nao encontrado. Instale Node 18+ & exit /b 1)
   pushd frontend
   if not exist node_modules call npm ci
   call npm run build

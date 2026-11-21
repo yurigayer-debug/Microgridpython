@@ -16,7 +16,7 @@ fi
 
 build_frontend() {
   if ! command -v npm >/dev/null 2>&1; then
-    echo "!! Node.js/npm não encontrado. Instale Node 18+ (https://nodejs.org) ou use: docker compose up --build"
+    echo "!! Node.js/npm não encontrado. Instale Node 18+ (https://nodejs.org)"
     exit 1
   fi
   echo "» Compilando a interface React…"

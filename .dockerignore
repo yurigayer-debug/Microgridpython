@@ -1,8 +1,0 @@
-.git
-**/__pycache__
-**/.pytest_cache
-webapp/.venv
-webapp/frontend/node_modules
-webapp/frontend/dist
-webapp/tests
-*.png
