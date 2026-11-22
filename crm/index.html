@@ -1783,7 +1783,7 @@ async function flush(){
 window.addEventListener('beforeunload',e=>{if(GAS&&syncPend){e.preventDefault();e.returnValue=''}});
 function novosDados(){S=seed();try{exemplos()}catch(e){}return S}
 function exemplos(){ // congela o snapshot das propostas de exemplo já emitidas
-  (S.propostas||[]).forEach(p=>{if(p.status!=='rascunho'&&!p.snap){p.token=p.token||token();p.snap=snapshotProp(p);
+  (S.propostas||[]).forEach(p=>{if(p.status!=='rascunho'&&!p.snap){p.token=p.token||token();if(!p.parametros)p.parametros=parametrosDe(p);p.snap=snapshotProp(p);
     (p.log||[]).forEach(l=>{if(l.quando==='—')l.quando=fdata(p.emitidaEm||todayISO())})}});
   if(!GAS&&!(S.seq&&S.seq.ctEx)){S.seq.ctEx=1;ctExemploSeed()}
 }
@@ -1818,6 +1818,7 @@ function migrar(){ // completa campos novos em dados antigos
     if(!p.tipoProposta){const kit=S.kits.find(k=>k.id===p.kitId);p.tipoProposta=(kit&&num(kit.backupKw)>0)||(p.cargas&&p.cargas.length)?'hibrido':'ongrid'}
     if(!p.templateId)p.templateId='executivo';
     p.modoPreco=modoPrecoDe(p);
+    if(p.status&&p.status!=='rascunho'&&!p.parametros)p.parametros=parametrosDe(p);
     if(!Array.isArray(p.imagens))p.imagens=[];
     p.imagens=normalizarImagens(p.imagens);
     if(p.snap&&Array.isArray(p.snap.imagens))p.snap.imagens=normalizarImagens(p.snap.imagens).filter(temImg);
@@ -2035,6 +2036,20 @@ document.addEventListener('DOMContentLoaded',()=>{['view','mbox'].forEach(id=>{c
 
 /* ===================== Cálculos ===================== */
 function fioBPct(ano){const t=S.cfg.fioBPct;const ks=Object.keys(t).map(Number).sort();if(ano<=ks[0])return t[ks[0]]/100;for(let i=ks.length-1;i>=0;i--)if(ano>=ks[i])return t[ks[i]]/100;return 1}
+/* ---- Parâmetros da proposta: na emissão, guardamos as tabelas, taxas e regras usadas.
+   Depois disso, a proposta só muda se for reemitida. Antes da emissão (rascunho), usa os valores atuais. ---- */
+function parametrosDe(p){
+  const pr=S.cfg.precificacao||{},kits={};
+  S.kits.forEach(k=>{if(num(k.precoTabela))kits[k.id]=num(k.precoTabela)});
+  return {emitidoEm:todayISO(),margemMin:num(S.cfg.margemMin),iof:JSON.parse(JSON.stringify(S.cfg.iof||{})),
+    financeiras:JSON.parse(JSON.stringify(S.cfg.financeiras||[])),precoTabelaKits:kits,
+    padroes:{modoPadrao:pr.modoPadrao,markupPadrao:pr.markupPadrao,precoWpPadrao:pr.precoWpPadrao}};
+}
+function cfgVivo(p){
+  const f=p&&p.parametros;
+  return f?{financeiras:f.financeiras||[],iof:f.iof||{},margemMin:f.margemMin,kits:f.precoTabelaKits||{}}
+    :{financeiras:S.cfg.financeiras||[],iof:S.cfg.iof||{},margemMin:S.cfg.margemMin,kits:null};
+}
 /* ---- Precificação: 6 formas de formar o preço final. Cada orçamento escolhe a sua; as regras padrão ficam na aba Precificação ---- */
 const MODOS_PRECO={
   margem:{label:'Margem sobre o custo',desc:'Você informa a margem desejada; o sistema calcula o preço a partir do custo dos itens.'},
@@ -2052,9 +2067,9 @@ function precoPorModo(p,x){
     case 'total':return num(p.preco);
     case 'markup':return x.diretos*(1+num(p.markup)/100)/base;
     case 'wp':return x.kwp*1000*num(p.precoWp);
-    case 'tabela':{const k=S.kits.find(y=>y.id===p.kitId);if(!k||!num(k.precoTabela)||!k.nMod)return 0;return num(k.precoTabela)*(x.nMod/k.nMod)}
-    case 'parcela':{const q=p.parcela||{},f=(S.cfg.financeiras||[])[+q.fin];const pmt=num(q.valor),n=Math.max(1,Math.round(num(q.prazo)||60));
-      if(!f||pmt<=0)return 0;const i=num(f.taxa)/100,iof=num((S.cfg.iof||{})[f.tipo||'PF'])/100;
+    case 'tabela':{const k=S.kits.find(y=>y.id===p.kitId);const vt=cfgVivo(p).kits?cfgVivo(p).kits[p.kitId]:(k&&k.precoTabela);if(!k||!num(vt)||!k.nMod)return 0;return num(vt)*(x.nMod/k.nMod)}
+    case 'parcela':{const q=p.parcela||{},f=cfgVivo(p).financeiras[+q.fin];const pmt=num(q.valor),n=Math.max(1,Math.round(num(q.prazo)||60));
+      if(!f||pmt<=0)return 0;const i=num(f.taxa)/100,iof=num((cfgVivo(p).iof||{})[f.tipo||'PF'])/100;
       const pv=i>0?pmt*(1-Math.pow(1+i,-n))/i:pmt*n;return num(p.entrada)+pv/(1+iof)}
     default:return x.diretos/Math.max(0.05,1-x.com-x.imp-num(p.margem)/100);
   }
@@ -2163,13 +2178,13 @@ function calcProp(p0,opId){
   const vf=(i)=>base.fluxo.reduce((a,f,y)=>a+f.liq*Math.pow(1+i,24-y),0); // economia reinvestida a taxa i
   const cmp={cdiL,poup,vfCdi:final*Math.pow(1+cdiL,25),vfPoup:final*Math.pow(1+poup,25),vfSolar:vf(cdiL)};
   // financiamento
-  const fins=(S.cfg.financeiras||[]).map(f=>{const i=num(f.taxa)/100;const tipo=f.tipo||'PF',iof=num((S.cfg.iof||{})[tipo]);const pv=Math.max(0,final-num(p.entrada))*(1+iof/100);return {nome:f.nome,taxa:f.taxa,tipo,iof,op:String(f.prazos).split(',').map(x=>parseInt(x)).filter(x=>x>0).map(n=>({n,pmt:i>0?pv*i/(1-Math.pow(1+i,-n)):pv/n}))}});
+  const fins=cfgVivo(p).financeiras.map(f=>{const i=num(f.taxa)/100;const tipo=f.tipo||'PF',iof=num((cfgVivo(p).iof||{})[tipo]);const pv=Math.max(0,final-num(p.entrada))*(1+iof/100);return {nome:f.nome,taxa:f.taxa,tipo,iof,op:String(f.prazos).split(',').map(x=>parseInt(x)).filter(x=>x>0).map(n=>({n,pmt:i>0?pv*i/(1-Math.pow(1+i,-n)):pv/n}))}});
   const kit=S.kits.find(k=>k.id===p.kitId);const invKw=kit?num(kit.invKw):0;const ccca=invKw?kwp/invKw:0;
   const bat=num(p.bateriaKwh)||(kit?num(kit.bateriaKwh):0);
   return {opId:opId||'A',invKw,ccca,cccaAlto:invKw>0&&ccca>num(S.cfg.ccca||1.3),cons,consAno,media,disp,kwpNec,nMod,nModAuto,kwp,gerMes,gerAno,atende,area,grp,projeto,frete,diretos,preco,final,comV,impV,lucro,margemF,porWp,
     pr:fator,pd,fo,simult:p.simult===undefined?0:num(p.simult),bat,backupKw:kit?num(kit.backupKw):0,kitNome:kit?kit.nome:'',inversor:kit?kit.inversor:'',invCusto,
     econ1:base.econ1,econMes:base.econ1/12,contaAtual:base.contaAtual,contaNova1:base.contaNova1,payback:base.payback,fluxo:base.fluxo,econBruta:base.econBruta,econTot:base.liqTot,omTot:base.omTot,trTot:base.trTot,trVal:base.trVal,tir:base.tir,vpl:base.vpl,tma:base.tma,cen,cmp,
-    roi:final?base.liqTot/final:0,fins,abaixoMin:final>0&&margemF*100<S.cfg.margemMin};
+    roi:final?base.liqTot/final:0,fins,abaixoMin:final>0&&margemF*100<cfgVivo(p).margemMin};
 }
 
 /* ---- Pacote 2: opções, backup, pagamento ---- */
@@ -2567,7 +2582,7 @@ function tabHtml(p){
       <td><input data-f="it.${i}.custo" type="number" step="any" value="${esc(it.custo)}" style="width:100px;border:1px solid var(--line);border-radius:6px;padding:5px;text-align:right"></td>
       <td class="num">${brl(num(it.qtd)*num(it.custo))}</td><td><button class="btn sm danger" onclick="rmItem('${p.id}',${i})">✕</button></td></tr>`).join('')}</table>`:`<div class="empty">${p.tipoProposta==='eletrica'?'Nenhum serviço/material ainda. Use os botões rápidos acima ou "+ Item".':'Nenhum item. Escolha um kit na aba 2 ou adicione manualmente.'}</div>`}
     <h3 style="margin-top:18px">Outros custos</h3><div class="fg">${inp(p,'projeto',p.tipoProposta==='eletrica'?'ART / Projeto / Taxas (R$)':'Projeto e homologação (R$)')}${inp(p,'frete','Deslocamento / Frete (R$)')}</div>`;
-  case 3:{const m=modoPrecoDe(p),info=MODOS_PRECO[m],k=S.kits.find(x=>x.id===p.kitId),cc=calcProp(p),q=p.parcela||{},fins=S.cfg.financeiras||[];
+  case 3:{const m=modoPrecoDe(p),info=MODOS_PRECO[m],cv=cfgVivo(p),k=S.kits.find(x=>x.id===p.kitId),cc=calcProp(p),q=p.parcela||{},fins=cfgVivo(p).financeiras;
     const ops=Object.entries(MODOS_PRECO).map(([v,o])=>`<option value="${v}" ${v===m?'selected':''}>${esc(o.label)}</option>`).join('');
     let campo='';
     if(m==='margem')campo=inp(p,'margem','Margem desejada (%)');
@@ -2586,11 +2601,11 @@ function tabHtml(p){
       ${campo}
       ${inp(p,'comissao','Comissão (%)')}${inp(p,'impostos','Impostos (%)')}${inp(p,'desconto','Desconto (R$)')}
       <label class="f w2">Observações para o cliente<textarea data-f="obs" rows="2">${esc(p.obs)}</textarea></label>
-    </div><div class="small muted" style="margin-top:8px">Margem = lucro ÷ preço final. Comissão e impostos incidem sobre o preço. Margem mínima: ${S.cfg.margemMin}%. Valores padrão de cada forma: aba <b>Precificação</b>.</div>`;}
+    </div><div class="small muted" style="margin-top:8px">Margem = lucro ÷ preço final. Comissão e impostos incidem sobre o preço. Margem mínima: ${cv.margemMin}%. Valores padrão de cada forma: aba <b>Precificação</b>.</div>${p.parametros?`<div class="hint" style="margin-top:10px">Tabelas, taxas e regras congeladas na emissão de ${fdata(p.parametros.emitidoEm)}. Para usar os valores atuais do sistema, reemita a proposta.</div>`:'<div class="small muted" style="margin-top:10px">Proposta em rascunho: usa as tabelas e taxas atuais. Ao emitir, elas ficam congeladas.</div>'}`;}
   case 4:return `<h3>Premissas de retorno</h3><div class="fg">${inp(p,'reajuste','Reajuste da tarifa (% ao ano)')}${p.degrad1!==undefined?inp(p,'degrad1','Degradação no 1º ano (%)'):''}${inp(p,'degradacao',p.degrad1!==undefined?'Degradação a partir do 2º ano (% ao ano)':'Degradação dos módulos (% ao ano)')}
     ${p.degrad1!==undefined?`${inp(p,'omPct','O&M anual (% do investimento)')}${inp(p,'inflacao','Inflação do O&M (% ao ano)')}${inp(p,'trocaInvAno','Troca do inversor no ano (0 = não troca)')}${inp(p,'trocaInvValor','Custo da troca (R$; vazio = automático)')}${inp(p,'tma','Taxa de desconto do VPL (% a.a.; vazio = CDI)')}`:''}</div>
     <div class="hint" style="margin-top:10px">Lei 14.300: o Fio B incide sobre a energia compensada, em percentual escalonado por ano (${Object.entries(S.cfg.fioBPct).map(([a,v])=>a+': '+v+'%').join(' · ')}), além do custo de disponibilidade. A tabela pode ser editada nas Configurações. <b>TODO-VERIFICAR</b> a regra depois de 2028. Energia consumida na hora da geração não paga Fio B.</div>`;
-  case 5:return `<h3>Simulação de financiamento</h3><div class="fg">${inp(p,'entrada','Entrada (R$)')}<label class="f w2">Comparar parcela × economia de<select data-f="finSel" data-rerender="1"><option value="">Melhor opção automática (menor parcela)</option>${(S.cfg.financeiras||[]).map((f,i)=>String(f.prazos).split(',').map(x=>parseInt(x)).filter(x=>x>0).map(n=>`<option value="${i}|${n}" ${p.finSel===i+'|'+n?'selected':''}>${esc(f.nome)} · ${n}×</option>`).join('')).join('')}</select></label></div><div class="small muted" style="margin-top:6px">As financeiras e as taxas são cadastradas em Configurações. Valores simulados pela tabela Price.</div>`;
+  case 5:return `<h3>Simulação de financiamento</h3><div class="fg">${inp(p,'entrada','Entrada (R$)')}<label class="f w2">Comparar parcela × economia de<select data-f="finSel" data-rerender="1"><option value="">Melhor opção automática (menor parcela)</option>${cfgVivo(p).financeiras.map((f,i)=>String(f.prazos).split(',').map(x=>parseInt(x)).filter(x=>x>0).map(n=>`<option value="${i}|${n}" ${p.finSel===i+'|'+n?'selected':''}>${esc(f.nome)} · ${n}×</option>`).join('')).join('')}</select></label></div><div class="small muted" style="margin-top:6px">As financeiras e as taxas são cadastradas em Configurações. Valores simulados pela tabela Price.</div>`;
   case 6:{const ops=listaOps(p);return `<h3>Opções para o cliente escolher</h3><div class="small muted" style="margin-bottom:10px">A opção A é a própria proposta (abas 1 a 5). Adicione B e C para o cliente comparar e aceitar a que preferir pelo link. Cada opção tem seu kit, preço e margem; consumo, tarifa e premissas são os mesmos.</div>
     <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(250px,1fr))">${ops.map(id=>{const o=opcaoDe(p,id);const c=calcProp(p,id);return `<div class="card" style="box-shadow:none;border:1px solid var(--line)"><div class="row between"><b>Opção ${id}</b>${o?`<button class="btn sm danger" onclick="rmOpcao('${p.id}','${id}')">Remover</button>`:''}</div>
       ${o?`<label class="f">Nome<input data-f="op.${id}.nome" value="${esc(o.nome)}"></label>
@@ -2708,11 +2723,11 @@ function emitir(pid){
   const sp=(pagtoDe(p).obra||[]).reduce((a,o)=>a+num(o.pct),0);if(Math.abs(sp-100)>0.01&&(pagtoDe(p).formas||{}).obra!==false)errs.push('Parcelas da obra somando 100%');
   if(errs.length)return toast('Falta: '+errs.join(', '));
   if(c.abaixoMin&&!p.autorizada){return openModal(`<h2>Margem abaixo da mínima</h2><p>A margem final é <b>${n2(c.margemF*100,1)}%</b> e a mínima configurada é <b>${S.cfg.margemMin}%</b>.</p><label class="f">Senha de autorização do gestor${GAS?'':' (no protótipo: 901)'}<input id="aut" type="password"></label><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn pri" onclick="if(document.getElementById('aut').value===String(S.cfg.senhaGestor||'901')){const p=S.propostas.find(x=>x.id==='${pid}');p.autorizada=true;logP(p,'Margem abaixo da mínima autorizada');closeModal();emitir('${pid}')}else toast('Autorização inválida')">Autorizar</button></div>`)}
-  p.status='emitida';p.emitidaEm=todayISO();p.token=p.token||token();p.snap=snapshotProp(p);logP(p,'Proposta emitida');
+  p.status='emitida';p.emitidaEm=todayISO();p.token=p.token||token();p.parametros=parametrosDe(p);p.snap=snapshotProp(p);logP(p,'Proposta emitida');
   if(p.negocioId){const n=S.negocios.find(x=>x.id===p.negocioId);if(n){n.valor=Math.round(c.final);n.kwp=ehEl?0:+c.kwp.toFixed(2);if(ETAPAS_FUNIL.findIndex(e=>e.k===n.etapa)<3){n.etapa='proposta';n.movidoEm=todayISO()}}}
   save();toast('Proposta emitida. Link do cliente gerado.');viewProposta(pid);
 }
-function novaVersao(pid){const o=S.propostas.find(x=>x.id===pid);const p=JSON.parse(JSON.stringify(o));p.id=uid();p.versao=o.versao+1;p.status='rascunho';p.emitidaEm='';p.aceite=null;p.autorizada=false;p.snap=null;p.token='';p.log=[];logP(p,`Criada a partir da v${o.versao}`);S.propostas.push(p);save();go('prop-'+p.id)}
+function novaVersao(pid){const o=S.propostas.find(x=>x.id===pid);const p=JSON.parse(JSON.stringify(o));p.id=uid();p.versao=o.versao+1;p.status='rascunho';p.emitidaEm='';p.aceite=null;p.autorizada=false;p.snap=null;delete p.parametros;p.token='';p.log=[];logP(p,`Criada a partir da v${o.versao}`);S.propostas.push(p);save();go('prop-'+p.id)}
 function snapOpcao(p,id){
   const c=calcProp(p,id),q=pEfetiva(p,id),kit=S.kits.find(k=>k.id===q.kitId);
   const bk=calcBackup(p).opcs.find(o=>o.id===id)||{};
