@@ -106,6 +106,19 @@ O Claude Code roda os mesmos comandos deste guia.
 
 > Links criados antes da troca continuam com `localhost`. Gere de novo (Reenviar) para testar no celular.
 
+## Sem PC? Testar pelo celular com o GitHub Codespaces
+
+O Codespaces é um computador na nuvem do GitHub que roda este mesmo Docker e abre no navegador do celular. Contas pessoais têm horas grátis por mês; um Codespace parado não gasta essas horas, e ele desliga sozinho após 30 minutos sem uso.
+
+1. No navegador do celular, abra o repositório no GitHub e ative **Site para computador** no menu do navegador.
+2. Toque em **Code → Codespaces → … → New with options**.
+3. Escolha o branch `claude/crm-delta-contract-tab-18a2yd`, a configuração **Delta CRM (Docker)** e a máquina de **2 núcleos**. Toque em **Create codespace**.
+4. Espere de 5 a 10 minutos na primeira vez. No terminal aparecem o **endereço do CRM**, o **usuário** e a **senha**, que é gerada sozinha.
+5. Abra o endereço numa nova aba. Os links de proposta e de contrato já saem com esse endereço e abrem em qualquer celular, então dá para mandar por WhatsApp para alguém testar a assinatura.
+6. Os e-mails de teste ficam na aba **PORTS**, porta **8025**.
+
+> Os dados de exemplo continuam lá enquanto o Codespace existir. Apague o Codespace quando terminar os testes. Não use com dados reais de clientes: é ambiente de teste.
+
 ## Backup: o que fica onde
 
 | O quê | Onde | Frequência |
