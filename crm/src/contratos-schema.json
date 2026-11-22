@@ -1,0 +1,33 @@
+{
+  "nome": "DeltaContratos",
+  "descricao": "API da aba Contratos do CRM Delta Solar, exposta em window.DeltaContratos para o Claude (via MCP de navegador) ou automações preencherem e editarem contratos dentro da plataforma.",
+  "metodos": {
+    "listar()": "Lista os contratos: id, codigo, status, cliente, valor, templateId, propostaId, link.",
+    "obter(id)": "Registro completo do contrato (JSON).",
+    "templates()": "Modelos de contrato disponíveis.",
+    "campos()": "Códigos {{...}} disponíveis, por grupo.",
+    "variaveis(id)": "Valores atuais de todos os campos {{...}} do contrato.",
+    "faltando(id)": "Pendências para envio: e (bloqueia), w (avisos), campos (vazios no texto).",
+    "texto(id)": "Texto final do contrato em texto puro.",
+    "criarDeProposta(propostaId, templateId?)": "Cria contrato a partir de uma proposta; devolve o id.",
+    "criarManual(dados, templateId)": "Cria contrato com os dados informados (mesmo formato de 'contrato'); devolve o id.",
+    "atualizar(id, patch)": "Mescla campos (ex.: {parte:{cep:'96010-470'}, kit:{modQtd:4}}). Recusa contratos já assinados.",
+    "enviar(id)": "Valida, congela o texto e libera para assinatura; devolve status e link (modo Google).",
+    "exportarDocx(id)": "Baixa o .docx.",
+    "exportarPdf(id)": "Baixa o PDF.",
+    "abrir(id)": "Abre o editor do contrato."
+  },
+  "contrato": {
+    "templateId": "ct_solar | ct_eletrica | ct_aditivo | id de modelo próprio",
+    "parte": {"tipo": "PF|PJ", "nome": "", "doc": "CPF/CNPJ", "rg": "", "representante": "", "fone": "", "email": "", "cep": "", "logradouro": "", "numero": "", "complemento": "", "bairro": "", "cidade": "", "uf": ""},
+    "obra": {"mesmo": true, "cep": "", "logradouro": "", "numero": "", "bairro": "", "cidade": "", "uf": "", "concessionaria": "", "uc": ""},
+    "kit": {"modQtd": 0, "modMarca": "", "modWp": 0, "invQtd": 1, "invDesc": "", "invKw": 0, "batDesc": "", "telhado": "", "estruturaMaterial": "", "extras": ""},
+    "itens": [{"desc": "", "kwp": "", "fornecedor": "", "valor": 0}],
+    "parcelas": [{"data": "AAAA-MM-DD", "desc": "", "valor": 0}],
+    "formaPagto": "", "prazoDias": 90, "garantiaAnos": 2, "cidade": "", "data": "AAAA-MM-DD",
+    "elEscopo": "", "elNormas": "", "elPrazo": 5, "elGarantia": "", "elArt": true,
+    "clausulas": [{"titulo": "", "texto": "texto com {{campos}}, **negrito** e linhas '• tópico'"}],
+    "testemunhas": [{"nome": "", "doc": ""}, {"nome": "", "doc": ""}]
+  },
+  "status": ["rascunho", "enviado", "visualizado", "assinado_cliente", "concluido", "cancelado"]
+}
