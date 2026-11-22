@@ -147,6 +147,7 @@ function ctRevisarHtml(c){
     ${w.length?`<div class="hint" style="margin-bottom:10px">${w.map(esc).join('<br>')}</div>`:''}
     ${snapDif?`<div class="hint" style="margin-bottom:10px">Se você alterou algo depois do envio, toque em <b>Reenviar</b> para atualizar o que o cliente vê.</div>`:''}
     ${link?`<div class="small" style="margin-bottom:10px">Link de assinatura: <span class="mono" style="word-break:break-all">${esc(link)}</span> <button class="btn sm" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(link)}');toast('Link copiado')">Copiar</button></div>`:(!GAS?'<div class="hint" style="margin-bottom:10px">Modo navegador: o link remoto de assinatura funciona no modo Google (Apps Script + Contratos.gs). Aqui você pode colher a assinatura <b>presencialmente</b> neste aparelho, ou enviar o PDF.</div>':(c.status!=='rascunho'&&!S.cfg.urlPublica?'<div class="hint">Configure a URL pública em Configurações para gerar o link.</div>':''))}
+    ${c.pdfUrl?`<div class="hint" style="margin-bottom:10px;background:var(--pg);border-color:var(--pg);color:var(--pgi)">📎 PDF assinado guardado no servidor: <a href="${esc(c.pdfUrl)}" target="_blank" rel="noopener">abrir</a></div>`:''}
     <div class="ct-acts">
       ${ro?'':`<button class="btn sun" onclick="ctEnviar('${c.id}')">📤 ${c.status==='rascunho'?'Gerar e enviar para assinatura':'Reenviar (atualizar)'}</button>`}
       <button class="btn ok" onclick="ctModalWhats('${c.id}')">💬 Enviar por WhatsApp</button>
@@ -220,7 +221,7 @@ async function ctEnviar(id){
   ctNumerar(c);c.token=c.token||token();c.snap=await ctSnapshot(c);
   const novo=c.status==='rascunho';if(novo){c.status='enviado';c.enviadoEm=todayISO()}
   logCt(c,novo?'Contrato gerado e liberado para assinatura':'Contrato reenviado (texto atualizado)');
-  if(GAS){try{await gas('publicarContrato',{id:c.id,token:c.token,snap:c.snap,html:ctDocHtml(c.snap,{}),nome:c.parte.nome,email:c.parte.email,status:c.status});}catch(err){toast('Falha ao publicar no Google: '+(err&&err.message||err))}}
+  if(GAS){try{save();clearTimeout(save._t);await flush();await gas('publicarContrato',{id:c.id,token:c.token,snap:c.snap,html:ctDocHtml(c.snap,{}),nome:c.parte.nome,email:c.parte.email,status:c.status});}catch(err){toast('Falha ao publicar no Google: '+(err&&err.message||err))}}
   save();ctPasso=4;viewContrato(id);ctModalWhats(id);
 }
 function ctMsg(c){

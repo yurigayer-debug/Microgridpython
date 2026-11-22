@@ -644,9 +644,11 @@ function ctDeProposta(pid,tplId){
   }else{
     Object.assign(c,{elEscopo:s.elEscopo||'',elNormas:s.elNormas||c.elNormas,elPrazo:s.elPrazo||5,elGarantia:s.elGarantia||c.elGarantia,elArt:s.elArt!==false});
   }
-  const total=o.final||s.final||0;
-  c.itens=ctItensPadrao(total,ehEl?0:o.kwp,ehEl);
   const tits=p.aceite?titulosDoAceite(s,o,p.aceite.forma):((o.pagto&&o.pagto.obra)||[]).map(x=>({desc:`${x.nome} (${n0(x.pct)}%)`,valor:x.valor,dias:x.dias}));
+  // Valor do contrato = valor acordado no aceite (ex.: PIX com desconto); sem aceite, o preço da opção
+  const somaTits=Math.round(tits.reduce((a,t)=>a+num(t.valor),0)*100)/100;
+  const total=p.aceite&&somaTits>0?somaTits:(o.final||s.final||0);
+  c.itens=ctItensPadrao(total,ehEl?0:o.kwp,ehEl);
   const base=(p.aceite&&p.aceite.data)||todayISO();
   c.parcelas=(tits.length?tits:[{desc:'Parcela única',valor:total,dias:3}]).map(t=>({data:addDays(base,t.dias||0),desc:t.desc,valor:Math.round(num(t.valor)*100)/100}));
   if(p.aceite)c.formaPagto=`Forma escolhida pelo CONTRATANTE no aceite da proposta: ${formaNome(o,p.aceite.forma)}.`;
@@ -715,7 +717,7 @@ function ctVars(c){
 /* Substitui as variáveis. modo: 'marca' (editor: ⟦falta⟧), 'final' (documento), 'modelo' (mantém {{...}}) */
 function ctSub(txt,vars,modo){
   return String(txt||'').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g,(_,k)=>{
-    if(CT_TABELAS.includes(k))return '\u0000T:'+k+'\u0000';
+    if(CT_TABELAS.includes(k))return '\uE000T:'+k+'\uE000';
     if(modo==='modelo')return '{{'+k+'}}';
     const val=vars[k];
     if(val==null||String(val).trim()===''||(typeof val!=='string'&&typeof val!=='number'))return modo==='marca'?'⟦'+k+'⟧':'________';
@@ -736,7 +738,7 @@ function ctRender(c,modo='final'){
 }
 function ctFaltando(c){const r=ctRender(c,'marca');const txt=JSON.stringify(r);const f=new Set();txt.replace(/⟦([a-z0-9_]+)⟧/g,(_,k)=>f.add(k));return [...f]}
 function ctTextoPlano(r){
-  const tab=l=>l.replace(/\u0000T:(\w+)\u0000/g,(_,k)=>k==='tabela_itens'?r.itens.map((i,j)=>`${j+1}. ${i.desc} ${i.kwp||''} ${i.fornecedor||''} ${brl(i.valor)}`).join('\n')+`\nTotal ${brl(r.total)}`:r.parcelas.map(p=>`${fdata(p.data)} ${p.desc} ${brl(p.valor)}`).join('\n'));
+  const tab=l=>l.replace(/\uE000T:(\w+)\uE000/g,(_,k)=>k==='tabela_itens'?r.itens.map((i,j)=>`${j+1}. ${i.desc} ${i.kwp||''} ${i.fornecedor||''} ${brl(i.valor)}`).join('\n')+`\nTotal ${brl(r.total)}`:r.parcelas.map(p=>`${fdata(p.data)} ${p.desc} ${brl(p.valor)}`).join('\n'));
   return [r.titulo,...r.preambulo.map(tab),...r.clausulas.flatMap(cl=>[`CLÁUSULA ${cl.ord} – ${cl.titulo}`,...cl.linhas.map(tab)]),...r.fecho.map(tab)].join('\n').replace(/\*\*/g,'');
 }
 async function ctHash(txt){
@@ -768,9 +770,9 @@ function ctTabParcHtml(r){
   return `<table><thead><tr><th style="width:120px">Data</th><th>Descrição</th><th class="r" style="width:140px">Valor R$</th></tr></thead><tbody>${r.parcelas.map(p=>`<tr><td style="text-align:center">${fdata(p.data)}</td><td>${esc(p.desc)}</td><td class="r">${brl(p.valor)}</td></tr>`).join('')}</tbody></table>`;
 }
 function ctLinhaHtml(l,r){
-  const m=/^\u0000T:(\w+)\u0000$/.exec(l.trim());
+  const m=/^\uE000T:(\w+)\uE000$/.exec(l.trim());
   if(m)return m[1]==='tabela_itens'?ctTabItensHtml(r):ctTabParcHtml(r);
-  if(l.indexOf('\u0000T:')>=0)return l.split(/(\u0000T:\w+\u0000)/).map(x=>/^\u0000T:/.test(x)?ctLinhaHtml(x,r):(x.trim()?`<p>${ctInline(x)}</p>`:'')).join('');
+  if(l.indexOf('\uE000T:')>=0)return l.split(/(\uE000T:\w+\uE000)/).map(x=>/^\uE000T:/.test(x)?ctLinhaHtml(x,r):(x.trim()?`<p>${ctInline(x)}</p>`:'')).join('');
   if(/^\s*•\s/.test(l))return `<p class="ct-bul">${ctInline(l.trim())}</p>`;
   return `<p>${ctInline(l)}</p>`;
 }
@@ -867,8 +869,8 @@ async function ctGerarDocx(snap,assin,modelo=false){
     ?ctDocxTbl(COLI,modelo?[['{{item_n}}','{{item_desc}}','{{item_kwp}}','{{item_fornecedor}}','{{item_valor}}'],{total:'{{valor_final}}'}]:[...r.itens.map((i,j)=>[String(j+1),i.desc,i.kwp||'',i.fornecedor||'',i.valor?brl(i.valor):'']),{total:brl(r.total)}])
     :ctDocxTbl(COLP,modelo?[['{{parcela_data}}','{{parcela_desc}}','{{parcela_valor}}']]:r.parcelas.map(p=>[fdata(p.data),p.desc,brl(p.valor)]));
   const linha=(l,pre)=>{
-    const t=(pre||'')+l;const m=/^\u0000T:(\w+)\u0000$/.exec(l.trim());if(m&&!pre)return tab(m[1]);
-    if(t.indexOf('\u0000T:')>=0)return t.split(/(\u0000T:\w+\u0000)/).map(x=>{const mm=/^\u0000T:(\w+)\u0000$/.exec(x);return mm?tab(mm[1]):(x.trim()?ctDocxP(x):'')}).join('');
+    const t=(pre||'')+l;const m=/^\uE000T:(\w+)\uE000$/.exec(l.trim());if(m&&!pre)return tab(m[1]);
+    if(t.indexOf('\uE000T:')>=0)return t.split(/(\uE000T:\w+\uE000)/).map(x=>{const mm=/^\uE000T:(\w+)\uE000$/.exec(x);return mm?tab(mm[1]):(x.trim()?ctDocxP(x):'')}).join('');
     if(/^\s*•\s/.test(t))return ctDocxP(t.trim(),{ind:500,align:'left',after:80});
     return ctDocxP(t);
   };
@@ -1069,6 +1071,7 @@ function ctRevisarHtml(c){
     ${w.length?`<div class="hint" style="margin-bottom:10px">${w.map(esc).join('<br>')}</div>`:''}
     ${snapDif?`<div class="hint" style="margin-bottom:10px">Se você alterou algo depois do envio, toque em <b>Reenviar</b> para atualizar o que o cliente vê.</div>`:''}
     ${link?`<div class="small" style="margin-bottom:10px">Link de assinatura: <span class="mono" style="word-break:break-all">${esc(link)}</span> <button class="btn sm" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(link)}');toast('Link copiado')">Copiar</button></div>`:(!GAS?'<div class="hint" style="margin-bottom:10px">Modo navegador: o link remoto de assinatura funciona no modo Google (Apps Script + Contratos.gs). Aqui você pode colher a assinatura <b>presencialmente</b> neste aparelho, ou enviar o PDF.</div>':(c.status!=='rascunho'&&!S.cfg.urlPublica?'<div class="hint">Configure a URL pública em Configurações para gerar o link.</div>':''))}
+    ${c.pdfUrl?`<div class="hint" style="margin-bottom:10px;background:var(--pg);border-color:var(--pg);color:var(--pgi)">📎 PDF assinado guardado no servidor: <a href="${esc(c.pdfUrl)}" target="_blank" rel="noopener">abrir</a></div>`:''}
     <div class="ct-acts">
       ${ro?'':`<button class="btn sun" onclick="ctEnviar('${c.id}')">📤 ${c.status==='rascunho'?'Gerar e enviar para assinatura':'Reenviar (atualizar)'}</button>`}
       <button class="btn ok" onclick="ctModalWhats('${c.id}')">💬 Enviar por WhatsApp</button>
@@ -1142,7 +1145,7 @@ async function ctEnviar(id){
   ctNumerar(c);c.token=c.token||token();c.snap=await ctSnapshot(c);
   const novo=c.status==='rascunho';if(novo){c.status='enviado';c.enviadoEm=todayISO()}
   logCt(c,novo?'Contrato gerado e liberado para assinatura':'Contrato reenviado (texto atualizado)');
-  if(GAS){try{await gas('publicarContrato',{id:c.id,token:c.token,snap:c.snap,html:ctDocHtml(c.snap,{}),nome:c.parte.nome,email:c.parte.email,status:c.status});}catch(err){toast('Falha ao publicar no Google: '+(err&&err.message||err))}}
+  if(GAS){try{save();clearTimeout(save._t);await flush();await gas('publicarContrato',{id:c.id,token:c.token,snap:c.snap,html:ctDocHtml(c.snap,{}),nome:c.parte.nome,email:c.parte.email,status:c.status});}catch(err){toast('Falha ao publicar no Google: '+(err&&err.message||err))}}
   save();ctPasso=4;viewContrato(id);ctModalWhats(id);
 }
 function ctMsg(c){
@@ -1772,9 +1775,9 @@ async function flush(){
   try{
     const r=await gas('salvarAlteracoes',ch);
     // números atribuídos pelo servidor (propostas/contratos), sem gerar nova gravação
-    (r&&r.nums||[]).forEach(x=>{const o=(S[x.col]||[]).find(y=>y.id===x.id);if(o){o.num=x.num;if(o.snap)o.snap.num=x.num;lastSync[x.col][o.id]=JSON.stringify(o)}});
+    (r&&r.nums||[]).forEach(x=>{const o=(S[x.col]||[]).find(y=>y.id===x.id);if(o){o.num=x.num;if(x.codigo){o.codigo=x.codigo;if(o.snap)o.snap.codigo=x.codigo}if(o.snap)o.snap.num=x.num;lastSync[x.col][o.id]=JSON.stringify(o)}});
     if(r&&r.nums&&r.nums.length&&curHash().startsWith('prop'))route();
-    syncPend=false;syncErr=false;setSync('Salvo na planilha ✓ '+new Date().toLocaleTimeString('pt-BR').slice(0,5));
+    syncPend=false;syncErr=false;setSync((window.DELTA_SERVIDOR?'Salvo no servidor ✓ ':'Salvo na planilha ✓ ')+new Date().toLocaleTimeString('pt-BR').slice(0,5));
   }catch(e){lastSync=antes;syncErr=true;setSync('Erro ao salvar. Tentando de novo…',true);toast('Erro ao salvar: '+(e&&e.message||e));clearTimeout(save._t);save._t=setTimeout(flush,6000)}
 }
 window.addEventListener('beforeunload',e=>{if(GAS&&syncPend){e.preventDefault();e.returnValue=''}});
@@ -1824,14 +1827,16 @@ function migrar(){ // completa campos novos em dados antigos
   }
 }
 async function loadGas(){
-  setSync('Carregando da planilha…');
+  setSync((window.DELTA_SERVIDOR?'Carregando do servidor…':'Carregando da planilha…'));
   const r=await gas('carregarTudo');USER=r.usuario||'';LINKS=r.links||{};PERFIL_GAS=r.perfil||null;
+  const urlSrv=r.urlPublica||''; // servidor Docker informa a própria URL pública
+  setTimeout(()=>{if(urlSrv&&S&&S.cfg&&!S.cfg.urlPublica){S.cfg.urlPublica=urlSrv;save()}},0);
   const vazio=COLS.every(c=>!(r.dados[c]||[]).length)&&!r.config;
   if(vazio){novosDados();COLS.forEach(c=>{if(c!=='kits')S[c]=[]});markSynced();lastSync=Object.fromEntries(COLS.map(c=>[c,{}]));lastSync._cfg='';return 'vazio'}
   S=Object.assign({},r.config||{});COLS.forEach(c=>S[c]=r.dados[c]||[]);migrar();markSynced();setSync('Sincronizado ✓');
   setTimeout(ctSyncGas,1500);
 }
-async function recarregar(){if(syncPend){toast('Aguarde salvar as alterações');return}await loadGas();route();toast('Dados atualizados da planilha')}
+async function recarregar(){if(syncPend){toast('Aguarde salvar as alterações');return}await loadGas();route();toast((window.DELTA_SERVIDOR?'Dados atualizados do servidor':'Dados atualizados da planilha'))}
 let _lastFocus=Date.now();window.addEventListener('focus',()=>{if(GAS&&!syncPend&&Date.now()-_lastFocus>60000){_lastFocus=Date.now();recarregar()}});
 function boasVindas(){openModal(`<h2>Base de dados vazia</h2><p>A planilha foi criada e ainda não tem registros. Como quer começar?</p><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeModal();save()">Começar vazio (só os kits)</button><button class="btn pri" onclick="novosDados();closeModal();save();route();toast('Dados de exemplo carregados')">Carregar dados de exemplo</button></div>`)}
 function seed(){
@@ -3799,7 +3804,7 @@ function viewConfig(){
   <div class="card"><h3>Financeiras (simulação)</h3>${c.financeiras.map((fi,i)=>`<div class="fg" style="margin-bottom:8px"><label class="f">Nome<input data-fi="${i}.nome" value="${esc(fi.nome)}"></label><label class="f">Taxa (% a.m.)<input data-fi="${i}.taxa" type="number" step="0.01" value="${fi.taxa}"></label><label class="f">Prazos (meses)<input data-fi="${i}.prazos" value="${esc(fi.prazos)}"></label><label class="f">Linha<select data-fi="${i}.tipo">${['PF','PJ','Rural'].map(t=>`<option ${(fi.tipo||'PF')===t?'selected':''}>${t}</option>`).join('')}</select></label></div>`).join('')}<button class="btn sm" onclick="S.cfg.financeiras.push({nome:'Nova financeira',taxa:1.5,prazos:'12,24,36'});save();viewConfig()">+ Financeira</button></div>
   <div class="card"><h3>IOF financiado e pagamento padrão</h3><div class="fg">${['PF','PJ','Rural'].map(t=>`<label class="f">IOF ${t} (%)<input data-iof="${t}" type="number" step="0.01" value="${(c.iof||{})[t]??0}"></label>`).join('')}<label class="f">Desconto PIX à vista (%)<input data-pg="pixDesc" type="number" step="0.1" value="${(c.pagto||{}).pixDesc??0}"></label><label class="f">Cartão em até (x)<input data-pg="cartaoAte" type="number" value="${(c.pagto||{}).cartaoAte??12}"></label><label class="f">Juros do cartão (% a.m.)<input data-pg="cartaoJuros" type="number" step="0.01" value="${(c.pagto||{}).cartaoJuros??0}"></label></div><div class="hint" style="margin-top:8px"><b>TODO-VERIFICAR</b> as alíquotas de IOF vigentes e a taxa real da sua maquininha. As parcelas da obra (sinal, instalação, conexão) são editadas em cada proposta.</div></div>
   <div class="card"><h3>Página do cliente (proposta)</h3><div class="fg">${[['marcas','Marcas e equipamentos'],['garantias','Garantias'],['rtNome','Responsável técnico (nome)'],['rtCrea','CREA/CFT do responsável'],['art','ART / TRT'],['docs','Documentos entregues']].map(([k,l])=>`<label class="f w2">${l}<input data-pa="${k}" value="${esc((c.pagina||{})[k]||'')}"></label>`).join('')}</div><div class="hint" style="margin-top:8px"><b>TODO-VERIFICAR</b> marcas, prazos de garantia e dados do responsável técnico antes de enviar propostas. Obras realizadas (galeria): edite em Exportar JSON → cfg.pagina.obras (tela própria numa próxima versão).</div></div>
-  ${GAS?`<div class="card"><h3>Google Drive</h3><div class="fg"><label class="f w2">URL pública das propostas (a 2ª implantação, “Qualquer pessoa”)<input data-c="urlPublica" type="url" placeholder="https:\/\/script.google.com/macros/s/…/exec" value="${esc(c.urlPublica||'')}"></label></div>${LINKS.planilha?`<div class="row" style="margin-top:10px"><a class="btn" href="${esc(LINKS.planilha)}" target="_blank" rel="noopener">Abrir a planilha</a><a class="btn" href="${esc(LINKS.pasta)}" target="_blank" rel="noopener">Abrir a pasta no Drive</a><button class="btn" onclick="backupAgora()">Fazer backup agora</button></div>`:''}<div class="small muted" style="margin-top:8px">O backup diário roda sozinho de madrugada: guarda 30 cópias diárias e 12 mensais na pasta Backups.</div></div>`:''}
+  ${GAS&&window.DELTA_SERVIDOR?`<div class="card"><h3>Servidor</h3><div class="small muted">Dados no Postgres. Backup automático diário em ./backups (30 diários, 8 semanais, 12 mensais).</div><div class="row" style="margin-top:10px"><button class="btn" onclick="backupAgora()">Fazer backup agora</button></div></div>`:''}${GAS&&!window.DELTA_SERVIDOR?`<div class="card"><h3>Google Drive</h3><div class="fg"><label class="f w2">URL pública das propostas (a 2ª implantação, “Qualquer pessoa”)<input data-c="urlPublica" type="url" placeholder="https:\/\/script.google.com/macros/s/…/exec" value="${esc(c.urlPublica||'')}"></label></div>${LINKS.planilha?`<div class="row" style="margin-top:10px"><a class="btn" href="${esc(LINKS.planilha)}" target="_blank" rel="noopener">Abrir a planilha</a><a class="btn" href="${esc(LINKS.pasta)}" target="_blank" rel="noopener">Abrir a pasta no Drive</a><button class="btn" onclick="backupAgora()">Fazer backup agora</button></div>`:''}<div class="small muted" style="margin-top:8px">O backup diário roda sozinho de madrugada: guarda 30 cópias diárias e 12 mensais na pasta Backups.</div></div>`:''}
   <div class="card"><h3>Dados</h3><div class="row"><button class="btn" onclick="exportarArquivo()">⬇ Baixar backup (.json)</button><button class="btn" onclick="exportar()">Ver JSON</button>${GAS?'':'<label class="btn">⬆ Importar backup<input type="file" accept="application/json,.json" style="display:none" onchange="importarArquivo(this)"></label><button class="btn danger" onclick="confirmRestore()">Restaurar dados de exemplo</button>'}</div>${GAS?'':'<div class="small muted" style="margin-top:8px">Neste modo os dados ficam só neste navegador. Baixe um backup com frequência.</div>'}</div>
   </div>`);
 }
@@ -3823,7 +3828,7 @@ function salvarConfig(){
   c.pagina=c.pagina||{};document.querySelectorAll('[data-pa]').forEach(i=>c.pagina[i.dataset.pa]=i.value.trim());
   c.ct=ctCfg();document.querySelectorAll('[data-ct]').forEach(i=>c.ct[i.dataset.ct]=i.dataset.ctn?num(i.value):i.value.trim());
   S.tecnicos=document.getElementById('cfg_tec').value.split(',').map(s=>s.trim()).filter(Boolean);if(!S.tecnicos.length)S.tecnicos=['Equipe 1'];
-  if(GAS&&c.urlPublica&&!/^https:\/\/script\.google\.com\/(a\/[^/]+\/)?macros\/s\/[\w-]+\/exec$/.test(c.urlPublica.split('?')[0])){save();return toast('Atenção: a URL pública deve ser o link /exec da 2ª implantação (Propostas públicas), sem nada depois. Confira em Configurações.')}
+  if(GAS&&c.urlPublica&&/google\.com/.test(c.urlPublica)&&!/^https:\/\/script\.google\.com\/(a\/[^/]+\/)?macros\/s\/[\w-]+\/exec$/.test(c.urlPublica.split('?')[0])){save();return toast('Atenção: a URL pública deve ser o link /exec da 2ª implantação (Propostas públicas), sem nada depois. Confira em Configurações.')}
   save();toast('Configurações salvas');
 }
 let LINKS={};
@@ -4137,8 +4142,8 @@ function instalarPwa(){
   if(B&&B.modo==='contrato'){return bootContratoPublico(B)}
   try{document.getElementById('ct-schema').textContent&&(window.DeltaContratos.schema=JSON.parse(document.getElementById('ct-schema').textContent))}catch(e){}
   if(GAS){
-    document.getElementById('modoinfo').innerHTML='Versão '+window.VERSAO+' · Dados na Planilha Google.<br><a href="#" onclick="event.preventDefault();recarregar()" style="color:#f4a41e">⟳ Atualizar da planilha</a>';
-    V('<div class="empty">Carregando dados da planilha…</div>');
+    document.getElementById('modoinfo').innerHTML='Versão '+window.VERSAO+(window.DELTA_SERVIDOR?' · Dados no servidor (Docker + Postgres).<br><a href="#" onclick="event.preventDefault();recarregar()" style="color:#f4a41e">⟳ Atualizar do servidor</a>':' · Dados na Planilha Google.<br><a href="#" onclick="event.preventDefault();recarregar()" style="color:#f4a41e">⟳ Atualizar da planilha</a>');
+    V('<div class="empty">Carregando dados'+(window.DELTA_SERVIDOR?' do servidor':' da planilha')+'…</div>');
     try{const r=await loadGas();document.getElementById('modoinfo').innerHTML+= USER?`<br>${esc(USER)}`:'';route();if(r==='vazio')boasVindas()}
     catch(e){V(`<div class="err">Não foi possível carregar a planilha: ${esc(e&&e.message||e)}</div>`)}
   }else{

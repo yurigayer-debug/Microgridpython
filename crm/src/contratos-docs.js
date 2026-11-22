@@ -9,9 +9,9 @@ function ctTabParcHtml(r){
   return `<table><thead><tr><th style="width:120px">Data</th><th>Descrição</th><th class="r" style="width:140px">Valor R$</th></tr></thead><tbody>${r.parcelas.map(p=>`<tr><td style="text-align:center">${fdata(p.data)}</td><td>${esc(p.desc)}</td><td class="r">${brl(p.valor)}</td></tr>`).join('')}</tbody></table>`;
 }
 function ctLinhaHtml(l,r){
-  const m=/^\u0000T:(\w+)\u0000$/.exec(l.trim());
+  const m=/^\uE000T:(\w+)\uE000$/.exec(l.trim());
   if(m)return m[1]==='tabela_itens'?ctTabItensHtml(r):ctTabParcHtml(r);
-  if(l.indexOf('\u0000T:')>=0)return l.split(/(\u0000T:\w+\u0000)/).map(x=>/^\u0000T:/.test(x)?ctLinhaHtml(x,r):(x.trim()?`<p>${ctInline(x)}</p>`:'')).join('');
+  if(l.indexOf('\uE000T:')>=0)return l.split(/(\uE000T:\w+\uE000)/).map(x=>/^\uE000T:/.test(x)?ctLinhaHtml(x,r):(x.trim()?`<p>${ctInline(x)}</p>`:'')).join('');
   if(/^\s*•\s/.test(l))return `<p class="ct-bul">${ctInline(l.trim())}</p>`;
   return `<p>${ctInline(l)}</p>`;
 }
@@ -108,8 +108,8 @@ async function ctGerarDocx(snap,assin,modelo=false){
     ?ctDocxTbl(COLI,modelo?[['{{item_n}}','{{item_desc}}','{{item_kwp}}','{{item_fornecedor}}','{{item_valor}}'],{total:'{{valor_final}}'}]:[...r.itens.map((i,j)=>[String(j+1),i.desc,i.kwp||'',i.fornecedor||'',i.valor?brl(i.valor):'']),{total:brl(r.total)}])
     :ctDocxTbl(COLP,modelo?[['{{parcela_data}}','{{parcela_desc}}','{{parcela_valor}}']]:r.parcelas.map(p=>[fdata(p.data),p.desc,brl(p.valor)]));
   const linha=(l,pre)=>{
-    const t=(pre||'')+l;const m=/^\u0000T:(\w+)\u0000$/.exec(l.trim());if(m&&!pre)return tab(m[1]);
-    if(t.indexOf('\u0000T:')>=0)return t.split(/(\u0000T:\w+\u0000)/).map(x=>{const mm=/^\u0000T:(\w+)\u0000$/.exec(x);return mm?tab(mm[1]):(x.trim()?ctDocxP(x):'')}).join('');
+    const t=(pre||'')+l;const m=/^\uE000T:(\w+)\uE000$/.exec(l.trim());if(m&&!pre)return tab(m[1]);
+    if(t.indexOf('\uE000T:')>=0)return t.split(/(\uE000T:\w+\uE000)/).map(x=>{const mm=/^\uE000T:(\w+)\uE000$/.exec(x);return mm?tab(mm[1]):(x.trim()?ctDocxP(x):'')}).join('');
     if(/^\s*•\s/.test(t))return ctDocxP(t.trim(),{ind:500,align:'left',after:80});
     return ctDocxP(t);
   };

@@ -81,9 +81,11 @@ function ctDeProposta(pid,tplId){
   }else{
     Object.assign(c,{elEscopo:s.elEscopo||'',elNormas:s.elNormas||c.elNormas,elPrazo:s.elPrazo||5,elGarantia:s.elGarantia||c.elGarantia,elArt:s.elArt!==false});
   }
-  const total=o.final||s.final||0;
-  c.itens=ctItensPadrao(total,ehEl?0:o.kwp,ehEl);
   const tits=p.aceite?titulosDoAceite(s,o,p.aceite.forma):((o.pagto&&o.pagto.obra)||[]).map(x=>({desc:`${x.nome} (${n0(x.pct)}%)`,valor:x.valor,dias:x.dias}));
+  // Valor do contrato = valor acordado no aceite (ex.: PIX com desconto); sem aceite, o preço da opção
+  const somaTits=Math.round(tits.reduce((a,t)=>a+num(t.valor),0)*100)/100;
+  const total=p.aceite&&somaTits>0?somaTits:(o.final||s.final||0);
+  c.itens=ctItensPadrao(total,ehEl?0:o.kwp,ehEl);
   const base=(p.aceite&&p.aceite.data)||todayISO();
   c.parcelas=(tits.length?tits:[{desc:'Parcela única',valor:total,dias:3}]).map(t=>({data:addDays(base,t.dias||0),desc:t.desc,valor:Math.round(num(t.valor)*100)/100}));
   if(p.aceite)c.formaPagto=`Forma escolhida pelo CONTRATANTE no aceite da proposta: ${formaNome(o,p.aceite.forma)}.`;
@@ -152,7 +154,7 @@ function ctVars(c){
 /* Substitui as variáveis. modo: 'marca' (editor: ⟦falta⟧), 'final' (documento), 'modelo' (mantém {{...}}) */
 function ctSub(txt,vars,modo){
   return String(txt||'').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g,(_,k)=>{
-    if(CT_TABELAS.includes(k))return '\u0000T:'+k+'\u0000';
+    if(CT_TABELAS.includes(k))return '\uE000T:'+k+'\uE000';
     if(modo==='modelo')return '{{'+k+'}}';
     const val=vars[k];
     if(val==null||String(val).trim()===''||(typeof val!=='string'&&typeof val!=='number'))return modo==='marca'?'⟦'+k+'⟧':'________';
@@ -173,7 +175,7 @@ function ctRender(c,modo='final'){
 }
 function ctFaltando(c){const r=ctRender(c,'marca');const txt=JSON.stringify(r);const f=new Set();txt.replace(/⟦([a-z0-9_]+)⟧/g,(_,k)=>f.add(k));return [...f]}
 function ctTextoPlano(r){
-  const tab=l=>l.replace(/\u0000T:(\w+)\u0000/g,(_,k)=>k==='tabela_itens'?r.itens.map((i,j)=>`${j+1}. ${i.desc} ${i.kwp||''} ${i.fornecedor||''} ${brl(i.valor)}`).join('\n')+`\nTotal ${brl(r.total)}`:r.parcelas.map(p=>`${fdata(p.data)} ${p.desc} ${brl(p.valor)}`).join('\n'));
+  const tab=l=>l.replace(/\uE000T:(\w+)\uE000/g,(_,k)=>k==='tabela_itens'?r.itens.map((i,j)=>`${j+1}. ${i.desc} ${i.kwp||''} ${i.fornecedor||''} ${brl(i.valor)}`).join('\n')+`\nTotal ${brl(r.total)}`:r.parcelas.map(p=>`${fdata(p.data)} ${p.desc} ${brl(p.valor)}`).join('\n'));
   return [r.titulo,...r.preambulo.map(tab),...r.clausulas.flatMap(cl=>[`CLÁUSULA ${cl.ord} – ${cl.titulo}`,...cl.linhas.map(tab)]),...r.fecho.map(tab)].join('\n').replace(/\*\*/g,'');
 }
 async function ctHash(txt){
