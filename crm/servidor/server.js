@@ -80,8 +80,11 @@ async function htmlParaPdf(html) {
   const fd = new FormData();
   fd.append('files', new Blob([`<!doctype html><html><head><meta charset="utf-8">${CSS_PDF}</head><body>${html}</body></html>`], { type: 'text/html' }), 'index.html');
   fd.append('marginTop', '0.6'); fd.append('marginBottom', '0.6'); fd.append('marginLeft', '0.6'); fd.append('marginRight', '0.6');
-  try { const r = await fetch(url.replace(/\/+$/, '') + '/forms/chromium/convert/html', { method: 'POST', body: fd }); if (!r.ok) throw new Error('HTTP ' + r.status); return Buffer.from(await r.arrayBuffer()); }
-  catch (e) { console.warn('PDF indisponível (Gotenberg):', e.message); return null; }
+  for (let t = 1; t <= 3; t++) { // o Chromium do Gotenberg às vezes falha na 1ª chamada (ex.: subindo o navegador)
+    try { const r = await fetch(url.replace(/\/+$/, '') + '/forms/chromium/convert/html', { method: 'POST', body: fd }); if (!r.ok) throw new Error('HTTP ' + r.status); return Buffer.from(await r.arrayBuffer()); }
+    catch (e) { console.warn(`PDF tentativa ${t}/3 falhou (Gotenberg):`, e.message); if (t < 3) await new Promise(r => setTimeout(r, 3000)); }
+  }
+  return null;
 }
 async function enviarEmail(m) {
   if (!smtp) { console.warn('SMTP não configurado; e-mail não enviado para', m.to); return false; }
@@ -120,6 +123,20 @@ function titulosDoAceite(s, op, forma) {
 function formaNome(op, f) { f = String(f || 'obra'); if (f === 'pix') return 'PIX à vista'; if (f.indexOf('cartao:') === 0) return 'Cartão ' + f.split(':')[1] + '×'; if (f.indexOf('fin:') === 0) return 'Financiamento'; return 'Parcelas da obra'; }
 const pubProp = p => ({ snap: p.snap, status: p.status, aceite: p.aceite || null });
 const pubCt = c => ({ snap: c.snap, status: c.status, assin: c.assin || {} });
+
+/* Depois da assinatura do cliente: PDF, link guardado e e-mails. Roda fora da resposta; se falhar, a assinatura já está salva. */
+async function posAssinatura(c) {
+  try {
+    const p = await pdfContrato(c);
+    if (p) { c.pdfUrl = p.url; await db.query("update registros set dados=jsonb_set(dados,'{pdfUrl}',to_jsonb($3::text)) where colecao=$1 and id=$2", ['contratosVenda', c.id, p.url]); }
+    const anexos = p ? [{ filename: p.nome, content: p.pdf }] : [];
+    const para = [c.assin.cliente.email, (c.parte || {}).email].filter((x, i, a) => x && a.indexOf(x) === i);
+    for (const to of para) await enviarEmail({ to, subject: `Contrato ${c.snap.codigo} assinado`, text: `Olá, ${c.assin.cliente.nome}!\n\nRecebemos a sua assinatura do contrato ${c.snap.codigo} em ${c.assin.cliente.quando}. A via assinada segue em anexo.\nCódigo de integridade (SHA-256): ${c.snap.hash}\n\n${(c.snap.empresa || {}).nome || ''}`, attachments: anexos });
+    const emp = (c.snap.empresa || {}).email;
+    if (emp) await enviarEmail({ to: emp, subject: `✍ Contrato ${c.snap.codigo} assinado por ${c.assin.cliente.nome}`, text: `O cliente assinou online em ${c.assin.cliente.quando}. Falta a contra-assinatura da empresa no CRM.${c.pdfUrl ? '\nPDF: ' + c.pdfUrl : ''}`, attachments: anexos });
+    log('público', 'pos-assinatura', c.id + (p ? ' com PDF' : ' sem PDF'));
+  } catch (e) { console.warn('Pós-assinatura:', e.message); }
+}
 
 /* ---------------- funções chamadas pelo navegador (mesmos nomes do Apps Script) ---------------- */
 const FUN = {
@@ -231,14 +248,7 @@ const FUN = {
     });
     if (!res.ok) return res;
     const c = res.ok;
-    try { // PDF + e-mails fora da transação: se falharem, a assinatura continua registrada
-      const p = await pdfContrato(c);
-      if (p) { c.pdfUrl = p.url; await gravarReg('contratosVenda', c, 'público'); }
-      const anexos = p ? [{ filename: p.nome, content: p.pdf }] : [];
-      const para = [c.assin.cliente.email, (c.parte || {}).email].filter((x, i, a) => x && a.indexOf(x) === i);
-      for (const to of para) await enviarEmail({ to, subject: `Contrato ${c.snap.codigo} assinado`, text: `Olá, ${c.assin.cliente.nome}!\n\nRecebemos a sua assinatura do contrato ${c.snap.codigo} em ${c.assin.cliente.quando}. A via assinada segue em anexo.\nCódigo de integridade (SHA-256): ${c.snap.hash}\n\n${(c.snap.empresa || {}).nome || ''}`, attachments: anexos });
-      const emp = (c.snap.empresa || {}).email; if (emp) await enviarEmail({ to: emp, subject: `✍ Contrato ${c.snap.codigo} assinado por ${c.assin.cliente.nome}`, text: `O cliente assinou online em ${c.assin.cliente.quando}. Falta a contra-assinatura da empresa no CRM.${c.pdfUrl ? '\nPDF: ' + c.pdfUrl : ''}`, attachments: anexos });
-    } catch (e) { console.warn('Pós-assinatura:', e.message); }
+    setImmediate(() => posAssinatura(c)); // PDF + e-mails depois da resposta: a assinatura já está gravada
     return pubCt(c);
   },
   async contraAssinarContrato(u, d) {
