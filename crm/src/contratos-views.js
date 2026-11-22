@@ -100,6 +100,7 @@ function ctPassoHtml(c){
     ${ehEl?`<h3 style="margin-top:18px">Escopo do serviço elétrico</h3><div class="fg"><label class="f w2">Escopo *<textarea data-f="elEscopo" rows="3">${esc(c.elEscopo||'')}</textarea></label>${ctIn(c,'elNormas','Normas','text','class="w2"')}${ctIn(c,'elPrazo','Prazo (dias úteis)','number')}${ctIn(c,'elGarantia','Garantia')}<label class="small" style="display:flex;gap:8px;align-items:center"><input type="checkbox" data-f="elArt" ${c.elArt!==false?'checked':''}> Com ART/TRT</label></div>`:''}`;
   case 2:{const tot=ctTotal(c),sp=Math.round((c.parcelas||[]).reduce((a,p)=>a+num(p.valor),0)*100)/100;
     return `<div class="row between"><h3 style="margin:0">Itens e valores</h3><div class="row"><button class="btn sm" onclick="ctAddLinha('${c.id}','itens')">+ Item</button><button class="btn sm" onclick="ctItensModelo('${c.id}')">↻ Montar itens padrão</button></div></div>
+    <div class="fg" style="margin:10px 0"><label class="f">Valor total do contrato (R$)<input data-f="totalManual" type="number" step="0.01" data-num="1" value="${esc(ctTotal(c))}"></label><div class="small muted" style="align-self:end">Ao digitar o total, os itens são redistribuídos na mesma proporção.</div></div>
     <table class="ct-tbl" style="margin-top:8px"><tr class="h"><th>#</th><th>Descrição</th>${c.tipo==='solar'?'<th>kWp</th>':''}<th>Fornecedor</th><th class="num">Valor (R$)</th><th></th></tr>
     ${(c.itens||[]).map((it,i)=>`<tr><td data-l="Item">${i+1}</td><td data-l="Descrição"><input data-f="itens.${i}.desc" value="${esc(it.desc)}"></td>${c.tipo==='solar'?`<td data-l="kWp" style="width:80px"><input data-f="itens.${i}.kwp" value="${esc(it.kwp||'')}"></td>`:''}<td data-l="Fornecedor" style="width:130px"><input data-f="itens.${i}.fornecedor" value="${esc(it.fornecedor||'')}"></td><td data-l="Valor" style="width:130px"><input data-f="itens.${i}.valor" data-num="1" type="number" step="0.01" value="${esc(it.valor)}" style="text-align:right"></td><td><button class="btn sm danger" onclick="ctRmLinha('${c.id}','itens',${i})" aria-label="Remover item">✕</button></td></tr>`).join('')}</table>
     <div class="resbox resgrid"><div><small>Valor total</small><b id="ctTot">${brl(tot)}</b></div><div style="grid-column:span 2"><small>Por extenso</small><b style="font-size:13px" id="ctExt">${esc(extensoReais(tot))}</b></div></div>
@@ -137,6 +138,8 @@ function ctValidar(c){
   const f=ctFaltando(c).filter(k=>!['testemunha1_nome','testemunha1_doc','testemunha2_nome','testemunha2_doc','assinatura_data','assinatura_hash','uc','cliente_rg','cliente_complemento','cliente_representante','kit_bat_desc','contrato_original','aditivo_descricao'].includes(k));
   if(f.length)w.push('Campos vazios no texto: '+f.join(', '));
   if(!pt.email&&!pt.fone)w.push('Sem e-mail e sem WhatsApp do contratante para o envio');
+  if(c.propostaId){const pr=S.propostas.find(x=>x.id===c.propostaId);if(pr){const ref=num((pr.snap||{}).final)||calcProp(pr).final;
+    if(Math.abs(ref-ctTotal(c))>0.5)w.push(`Total do contrato (${brl(ctTotal(c))}) difere da proposta (${brl(ref)}). Confirme que a diferença é intencional.`)}}
   return {e,w};
 }
 function ctRevisarHtml(c){
@@ -194,10 +197,10 @@ function viewContrato(id){
   const val=el=>el.type==='checkbox'?el.checked:(el.dataset.num?num(el.value):el.value);
   let tmr=null;
   body.addEventListener('focusin',e=>{if(e.target.matches('textarea,input.ct-cl-t'))ctCampoAtivo=e.target});
-  body.addEventListener('input',e=>{const f=e.target.dataset.f;if(!f||ro)return;ctSet(c,f,val(e.target));
-    if(f.startsWith('itens.')||f.startsWith('parcelas.')){const t=ctTotal(c),sp=(c.parcelas||[]).reduce((a,p)=>a+num(p.valor),0);const a=document.getElementById('ctTot');if(a)a.textContent=brl(t);const b=document.getElementById('ctExt');if(b)b.textContent=extensoReais(t);const d=document.getElementById('ctParcAviso');if(d)d.innerHTML=Math.abs(sp-t)>0.009?`<div class="err" style="margin-top:8px">As parcelas somam ${brl(sp)} e o total é ${brl(t)}.</div>`:'';const pb=document.getElementById('passobar');if(pb)pb.innerHTML=ctPassoBar(c)}
+  body.addEventListener('input',e=>{const f=e.target.dataset.f;if(!f||ro||f==='totalManual')return;ctSet(c,f,val(e.target));
+    if(f.startsWith('itens.')||f.startsWith('parcelas.')){const t=ctTotal(c),sp=(c.parcelas||[]).reduce((a,p)=>a+num(p.valor),0);const a=document.getElementById('ctTot');if(a)a.textContent=brl(t);const b=document.getElementById('ctExt');if(b)b.textContent=extensoReais(t);const d=document.getElementById('ctParcAviso');if(d)d.innerHTML=Math.abs(sp-t)>0.009?`<div class="err" style="margin-top:8px">As parcelas somam ${brl(sp)} e o total é ${brl(t)}.</div>`:'';const tm=document.querySelector('[data-f="totalManual"]');if(tm&&document.activeElement!==tm)tm.value=t;const pb=document.getElementById('passobar');if(pb)pb.innerHTML=ctPassoBar(c)}
     clearTimeout(tmr);tmr=setTimeout(()=>{save();const pv=document.getElementById('ctPrevBody');if(pv&&getComputedStyle(document.getElementById('ctPrev')).display!=='none')pv.innerHTML=ctPrevHtml(c)},450)});
-  body.addEventListener('change',e=>{const f=e.target.dataset.f;if(!f||ro)return;ctSet(c,f,val(e.target));if(f==='parte.doc'&&soDig(e.target.value).length===14&&c.parte.tipo!=='PJ'){c.parte.tipo='PJ';e.target.dataset.rerender=1}save();if(e.target.dataset.rerender)viewContrato(id)});
+  body.addEventListener('change',e=>{const f=e.target.dataset.f;if(f==='totalManual'&&!ro){ctDistribuirTotal(c,num(e.target.value));save();viewContrato(id);return}if(!f||ro)return;ctSet(c,f,val(e.target));if(f==='parte.doc'&&soDig(e.target.value).length===14&&c.parte.tipo!=='PJ'){c.parte.tipo='PJ';e.target.dataset.rerender=1}save();if(e.target.dataset.rerender)viewContrato(id)});
 }
 function ctInserirVar(v){const t=ctCampoAtivo;if(!t||!document.body.contains(t)){navigator.clipboard&&navigator.clipboard.writeText(v);return toast('Toque antes no texto da cláusula. Copiado: '+v)}
   const s=t.selectionStart??t.value.length,e=t.selectionEnd??s;t.value=t.value.slice(0,s)+v+t.value.slice(e);t.focus();t.selectionStart=t.selectionEnd=s+v.length;t.dispatchEvent(new Event('input',{bubbles:true}))}
@@ -206,6 +209,11 @@ function ctPuxarProposta(id){const c=ctDe(id);const n=ctDeProposta(c.propostaId,
 function ctPuxarKit(id,kid){const c=ctDe(id),k=S.kits.find(x=>x.id===kid);if(!c||!k)return;const m=/^(\d+)\s*[×x]\s*(.*)$/.exec(k.inversor||'');Object.assign(c.kit,{modQtd:k.nMod,modWp:k.modWp,invQtd:m?+m[1]:1,invDesc:m?m[2]:k.inversor,invKw:m?num(k.invKw)/+m[1]:k.invKw,batDesc:k.bateria||''});save();viewContrato(id);toast('Kit aplicado')}
 function ctAddLinha(id,col){const c=ctDe(id);(c[col]=c[col]||[]).push(col==='itens'?{desc:'',kwp:'',fornecedor:S.cfg.empresa||'Delta Solar',valor:0}:{data:addDays(todayISO(),30),desc:'Parcela',valor:0});save();viewContrato(id)}
 function ctRmLinha(id,col,i){const c=ctDe(id);c[col].splice(i,1);save();viewContrato(id)}
+/* Total digitado: os itens são redistribuídos na mesma proporção; o centavo de diferença vai para o último item */
+function ctDistribuirTotal(c,alvo){const its=c.itens||[],atual=ctTotal(c);if(!its.length||!(alvo>0)){toast('Informe o valor total e pelo menos um item');return}
+  if(!atual){its.forEach(it=>it.valor=0);its[0].valor=alvo;logCt(c,'Valor total definido: '+brl(alvo));return}
+  const f=alvo/atual;let soma=0;its.forEach((it,i)=>{if(i<its.length-1){it.valor=Math.round(num(it.valor)*f*100)/100;soma+=it.valor}});
+  its[its.length-1].valor=Math.round((alvo-soma)*100)/100;logCt(c,'Valor total ajustado para '+brl(alvo))}
 function ctItensModelo(id){const c=ctDe(id);const t=ctTotal(c)||num(prompt('Valor total do contrato (R$):','0'));c.itens=ctItensPadrao(t,c.tipo==='solar'?ctKwp(c):0,c.tipo==='eletrica');save();viewContrato(id)}
 function ctDividir(id){const c=ctDe(id);const n=parseInt(prompt('Dividir o total em quantas parcelas?','2'))||0;if(n<1)return;const t=ctTotal(c),v=Math.floor(t/n*100)/100;
   c.parcelas=Array.from({length:n},(_,i)=>({data:addDays(c.data||todayISO(),i===0?3:30*i),desc:n===1?'Parcela única':(i===0?'Sinal':`Parcela ${i+1}/${n}`),valor:i===n-1?Math.round((t-v*(n-1))*100)/100:v}));save();viewContrato(id)}

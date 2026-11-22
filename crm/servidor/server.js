@@ -44,6 +44,8 @@ async function iniciarBanco() {
     create table if not exists log(id bigserial primary key, quando timestamptz default now(), usuario text, acao text, detalhe text);
   `);
 }
+/* JSON com chaves ordenadas: o banco não preserva a ordem, então comparamos e assinamos sempre nesta forma */
+const canon = v => JSON.stringify(v === undefined ? null : v, (k, val) => (val && typeof val === 'object' && !Array.isArray(val)) ? Object.keys(val).sort().reduce((a, kk) => { a[kk] = val[kk]; return a; }, {}) : val);
 const log = (usuario, acao, detalhe) => db.query('insert into log(usuario,acao,detalhe) values($1,$2,$3)', [usuario || 'público', acao, String(detalhe || '').slice(0, 500)]).catch(() => {});
 async function lerCol(c, q = db) { const r = await q.query('select dados from registros where colecao=$1 and not excluido order by atualizado_em', [c]); return r.rows.map(x => x.dados); }
 async function lerReg(c, id, q = db, travar = false) { const r = await q.query(`select dados from registros where colecao=$1 and id=$2 and not excluido${travar ? ' for update' : ''}`, [c, id]); return r.rows[0] ? r.rows[0].dados : null; }
@@ -154,6 +156,22 @@ const FUN = {
         for (const o of lista) {
           if (!o || !o.id) continue;
           const atual = await lerReg(col, o.id, q, true);
+          if (col === 'propostas' && atual && atual.status && atual.status !== 'rascunho') {
+            // Proposta já enviada: o conteúdo (foto e premissas) só muda numa reemissão deliberada
+            const reemissao = (o.emissoes || 0) > (atual.emissoes || 0);
+            // Campos novos nas premissas (migração) são aceitos; mudar um valor já gravado não é
+            const premissasMudaram = Object.keys(atual.parametros || {}).some(k => canon((o.parametros || {})[k]) !== canon(atual.parametros[k]));
+            const mudou = canon(o.snap) !== canon(atual.snap) || premissasMudaram;
+            if (mudou && !reemissao) throw new Error('Proposta enviada ao cliente: o conteúdo está bloqueado. Use Nova versão.');
+          }
+          if (col === 'propostas' && atual) {
+            for (const k of ['status', 'modoPreco', 'margem', 'markup', 'precoWp', 'preco', 'desconto', 'parcela', 'validade', 'tipoProposta', 'templateId', 'emissoes'])
+              if (canon(o[k]) !== canon(atual[k])) log(u, 'proposta:' + k, `${o.id} v${o.versao || 1}: ${canon(atual[k])} → ${canon(o[k])}`);
+          }
+          if (col === 'propostas' && o.status && o.status !== 'rascunho' && o.snap && (!atual || atual.status === 'rascunho' || (o.emissoes || 0) > ((atual && atual.emissoes) || 0))) {
+            o.integridade = crypto.createHash('sha256').update(canon(o.snap)).digest('hex');
+            nums.push({ col, id: o.id, integridade: o.integridade });
+          }
           // Uma tela aberta há tempo não desfaz o que o cliente fez pelo link público
           if (atual && col === 'propostas' && ['aceita', 'recusada'].includes(atual.status) && o.status !== atual.status) { o.status = atual.status; o.aceite = atual.aceite; o.log = atual.log; }
           if (atual && col === 'contratosVenda' && atual.assin && atual.assin.cliente && !(o.assin && o.assin.cliente)) { o.assin = Object.assign({}, o.assin, { cliente: atual.assin.cliente }); if (!['concluido', 'cancelado'].includes(o.status)) o.status = atual.status; o.visualizadoEm = atual.visualizadoEm; o.log = atual.log; }

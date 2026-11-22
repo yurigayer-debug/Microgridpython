@@ -233,6 +233,12 @@ label.f input:focus,select:focus,textarea:focus{outline:2px solid var(--sun2);bo
 .dc-guarantee .ic-shield{font-size:28px;line-height:1;flex:0 0 auto}
 .dc-urgency{background:var(--hintbg);border:1px solid var(--hintln);color:var(--hintink);border-radius:12px;padding:11px 16px;margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;font-weight:600}
 @media (max-width:700px){.bill-cmp{grid-template-columns:1fr}.bill-arrow{transform:rotate(90deg)}}
+/* formas de preço: cartões comparáveis */
+.pf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px}
+.pf-card{border:2px solid var(--line);background:var(--card);border-radius:12px;padding:12px;text-align:left;cursor:pointer;color:var(--ink);display:flex;flex-direction:column;gap:6px;font:inherit;min-width:0}
+.pf-card:hover{border-color:var(--edge)}
+.pf-card.on{border-color:var(--green);background:var(--sel)}
+.pf-card .pf-preco{font-size:19px;font-weight:800;font-variant-numeric:tabular-nums}
 /* tecnico */
 .phone{max-width:420px;margin:0 auto}
 .tcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px}
@@ -1024,6 +1030,7 @@ function ctPassoHtml(c){
     ${ehEl?`<h3 style="margin-top:18px">Escopo do serviço elétrico</h3><div class="fg"><label class="f w2">Escopo *<textarea data-f="elEscopo" rows="3">${esc(c.elEscopo||'')}</textarea></label>${ctIn(c,'elNormas','Normas','text','class="w2"')}${ctIn(c,'elPrazo','Prazo (dias úteis)','number')}${ctIn(c,'elGarantia','Garantia')}<label class="small" style="display:flex;gap:8px;align-items:center"><input type="checkbox" data-f="elArt" ${c.elArt!==false?'checked':''}> Com ART/TRT</label></div>`:''}`;
   case 2:{const tot=ctTotal(c),sp=Math.round((c.parcelas||[]).reduce((a,p)=>a+num(p.valor),0)*100)/100;
     return `<div class="row between"><h3 style="margin:0">Itens e valores</h3><div class="row"><button class="btn sm" onclick="ctAddLinha('${c.id}','itens')">+ Item</button><button class="btn sm" onclick="ctItensModelo('${c.id}')">↻ Montar itens padrão</button></div></div>
+    <div class="fg" style="margin:10px 0"><label class="f">Valor total do contrato (R$)<input data-f="totalManual" type="number" step="0.01" data-num="1" value="${esc(ctTotal(c))}"></label><div class="small muted" style="align-self:end">Ao digitar o total, os itens são redistribuídos na mesma proporção.</div></div>
     <table class="ct-tbl" style="margin-top:8px"><tr class="h"><th>#</th><th>Descrição</th>${c.tipo==='solar'?'<th>kWp</th>':''}<th>Fornecedor</th><th class="num">Valor (R$)</th><th></th></tr>
     ${(c.itens||[]).map((it,i)=>`<tr><td data-l="Item">${i+1}</td><td data-l="Descrição"><input data-f="itens.${i}.desc" value="${esc(it.desc)}"></td>${c.tipo==='solar'?`<td data-l="kWp" style="width:80px"><input data-f="itens.${i}.kwp" value="${esc(it.kwp||'')}"></td>`:''}<td data-l="Fornecedor" style="width:130px"><input data-f="itens.${i}.fornecedor" value="${esc(it.fornecedor||'')}"></td><td data-l="Valor" style="width:130px"><input data-f="itens.${i}.valor" data-num="1" type="number" step="0.01" value="${esc(it.valor)}" style="text-align:right"></td><td><button class="btn sm danger" onclick="ctRmLinha('${c.id}','itens',${i})" aria-label="Remover item">✕</button></td></tr>`).join('')}</table>
     <div class="resbox resgrid"><div><small>Valor total</small><b id="ctTot">${brl(tot)}</b></div><div style="grid-column:span 2"><small>Por extenso</small><b style="font-size:13px" id="ctExt">${esc(extensoReais(tot))}</b></div></div>
@@ -1061,6 +1068,8 @@ function ctValidar(c){
   const f=ctFaltando(c).filter(k=>!['testemunha1_nome','testemunha1_doc','testemunha2_nome','testemunha2_doc','assinatura_data','assinatura_hash','uc','cliente_rg','cliente_complemento','cliente_representante','kit_bat_desc','contrato_original','aditivo_descricao'].includes(k));
   if(f.length)w.push('Campos vazios no texto: '+f.join(', '));
   if(!pt.email&&!pt.fone)w.push('Sem e-mail e sem WhatsApp do contratante para o envio');
+  if(c.propostaId){const pr=S.propostas.find(x=>x.id===c.propostaId);if(pr){const ref=num((pr.snap||{}).final)||calcProp(pr).final;
+    if(Math.abs(ref-ctTotal(c))>0.5)w.push(`Total do contrato (${brl(ctTotal(c))}) difere da proposta (${brl(ref)}). Confirme que a diferença é intencional.`)}}
   return {e,w};
 }
 function ctRevisarHtml(c){
@@ -1118,10 +1127,10 @@ function viewContrato(id){
   const val=el=>el.type==='checkbox'?el.checked:(el.dataset.num?num(el.value):el.value);
   let tmr=null;
   body.addEventListener('focusin',e=>{if(e.target.matches('textarea,input.ct-cl-t'))ctCampoAtivo=e.target});
-  body.addEventListener('input',e=>{const f=e.target.dataset.f;if(!f||ro)return;ctSet(c,f,val(e.target));
-    if(f.startsWith('itens.')||f.startsWith('parcelas.')){const t=ctTotal(c),sp=(c.parcelas||[]).reduce((a,p)=>a+num(p.valor),0);const a=document.getElementById('ctTot');if(a)a.textContent=brl(t);const b=document.getElementById('ctExt');if(b)b.textContent=extensoReais(t);const d=document.getElementById('ctParcAviso');if(d)d.innerHTML=Math.abs(sp-t)>0.009?`<div class="err" style="margin-top:8px">As parcelas somam ${brl(sp)} e o total é ${brl(t)}.</div>`:'';const pb=document.getElementById('passobar');if(pb)pb.innerHTML=ctPassoBar(c)}
+  body.addEventListener('input',e=>{const f=e.target.dataset.f;if(!f||ro||f==='totalManual')return;ctSet(c,f,val(e.target));
+    if(f.startsWith('itens.')||f.startsWith('parcelas.')){const t=ctTotal(c),sp=(c.parcelas||[]).reduce((a,p)=>a+num(p.valor),0);const a=document.getElementById('ctTot');if(a)a.textContent=brl(t);const b=document.getElementById('ctExt');if(b)b.textContent=extensoReais(t);const d=document.getElementById('ctParcAviso');if(d)d.innerHTML=Math.abs(sp-t)>0.009?`<div class="err" style="margin-top:8px">As parcelas somam ${brl(sp)} e o total é ${brl(t)}.</div>`:'';const tm=document.querySelector('[data-f="totalManual"]');if(tm&&document.activeElement!==tm)tm.value=t;const pb=document.getElementById('passobar');if(pb)pb.innerHTML=ctPassoBar(c)}
     clearTimeout(tmr);tmr=setTimeout(()=>{save();const pv=document.getElementById('ctPrevBody');if(pv&&getComputedStyle(document.getElementById('ctPrev')).display!=='none')pv.innerHTML=ctPrevHtml(c)},450)});
-  body.addEventListener('change',e=>{const f=e.target.dataset.f;if(!f||ro)return;ctSet(c,f,val(e.target));if(f==='parte.doc'&&soDig(e.target.value).length===14&&c.parte.tipo!=='PJ'){c.parte.tipo='PJ';e.target.dataset.rerender=1}save();if(e.target.dataset.rerender)viewContrato(id)});
+  body.addEventListener('change',e=>{const f=e.target.dataset.f;if(f==='totalManual'&&!ro){ctDistribuirTotal(c,num(e.target.value));save();viewContrato(id);return}if(!f||ro)return;ctSet(c,f,val(e.target));if(f==='parte.doc'&&soDig(e.target.value).length===14&&c.parte.tipo!=='PJ'){c.parte.tipo='PJ';e.target.dataset.rerender=1}save();if(e.target.dataset.rerender)viewContrato(id)});
 }
 function ctInserirVar(v){const t=ctCampoAtivo;if(!t||!document.body.contains(t)){navigator.clipboard&&navigator.clipboard.writeText(v);return toast('Toque antes no texto da cláusula. Copiado: '+v)}
   const s=t.selectionStart??t.value.length,e=t.selectionEnd??s;t.value=t.value.slice(0,s)+v+t.value.slice(e);t.focus();t.selectionStart=t.selectionEnd=s+v.length;t.dispatchEvent(new Event('input',{bubbles:true}))}
@@ -1130,6 +1139,11 @@ function ctPuxarProposta(id){const c=ctDe(id);const n=ctDeProposta(c.propostaId,
 function ctPuxarKit(id,kid){const c=ctDe(id),k=S.kits.find(x=>x.id===kid);if(!c||!k)return;const m=/^(\d+)\s*[×x]\s*(.*)$/.exec(k.inversor||'');Object.assign(c.kit,{modQtd:k.nMod,modWp:k.modWp,invQtd:m?+m[1]:1,invDesc:m?m[2]:k.inversor,invKw:m?num(k.invKw)/+m[1]:k.invKw,batDesc:k.bateria||''});save();viewContrato(id);toast('Kit aplicado')}
 function ctAddLinha(id,col){const c=ctDe(id);(c[col]=c[col]||[]).push(col==='itens'?{desc:'',kwp:'',fornecedor:S.cfg.empresa||'Delta Solar',valor:0}:{data:addDays(todayISO(),30),desc:'Parcela',valor:0});save();viewContrato(id)}
 function ctRmLinha(id,col,i){const c=ctDe(id);c[col].splice(i,1);save();viewContrato(id)}
+/* Total digitado: os itens são redistribuídos na mesma proporção; o centavo de diferença vai para o último item */
+function ctDistribuirTotal(c,alvo){const its=c.itens||[],atual=ctTotal(c);if(!its.length||!(alvo>0)){toast('Informe o valor total e pelo menos um item');return}
+  if(!atual){its.forEach(it=>it.valor=0);its[0].valor=alvo;logCt(c,'Valor total definido: '+brl(alvo));return}
+  const f=alvo/atual;let soma=0;its.forEach((it,i)=>{if(i<its.length-1){it.valor=Math.round(num(it.valor)*f*100)/100;soma+=it.valor}});
+  its[its.length-1].valor=Math.round((alvo-soma)*100)/100;logCt(c,'Valor total ajustado para '+brl(alvo))}
 function ctItensModelo(id){const c=ctDe(id);const t=ctTotal(c)||num(prompt('Valor total do contrato (R$):','0'));c.itens=ctItensPadrao(t,c.tipo==='solar'?ctKwp(c):0,c.tipo==='eletrica');save();viewContrato(id)}
 function ctDividir(id){const c=ctDe(id);const n=parseInt(prompt('Dividir o total em quantas parcelas?','2'))||0;if(n<1)return;const t=ctTotal(c),v=Math.floor(t/n*100)/100;
   c.parcelas=Array.from({length:n},(_,i)=>({data:addDays(c.data||todayISO(),i===0?3:30*i),desc:n===1?'Parcela única':(i===0?'Sinal':`Parcela ${i+1}/${n}`),valor:i===n-1?Math.round((t-v*(n-1))*100)/100:v}));save();viewContrato(id)}
@@ -1775,10 +1789,10 @@ async function flush(){
   try{
     const r=await gas('salvarAlteracoes',ch);
     // números atribuídos pelo servidor (propostas/contratos), sem gerar nova gravação
-    (r&&r.nums||[]).forEach(x=>{const o=(S[x.col]||[]).find(y=>y.id===x.id);if(o){o.num=x.num;if(x.codigo){o.codigo=x.codigo;if(o.snap)o.snap.codigo=x.codigo}if(o.snap)o.snap.num=x.num;lastSync[x.col][o.id]=JSON.stringify(o)}});
+    (r&&r.nums||[]).forEach(x=>{const o=(S[x.col]||[]).find(y=>y.id===x.id);if(o){if(x.num!==undefined)o.num=x.num;if(x.codigo){o.codigo=x.codigo;if(o.snap)o.snap.codigo=x.codigo}if(o.snap&&x.num!==undefined)o.snap.num=x.num;if(x.integridade)o.integridade=x.integridade;lastSync[x.col][o.id]=JSON.stringify(o)}});
     if(r&&r.nums&&r.nums.length&&curHash().startsWith('prop'))route();
     syncPend=false;syncErr=false;setSync((window.DELTA_SERVIDOR?'Salvo no servidor ✓ ':'Salvo na planilha ✓ ')+new Date().toLocaleTimeString('pt-BR').slice(0,5));
-  }catch(e){lastSync=antes;syncErr=true;setSync('Erro ao salvar. Tentando de novo…',true);toast('Erro ao salvar: '+(e&&e.message||e));clearTimeout(save._t);save._t=setTimeout(flush,6000)}
+  }catch(e){lastSync=antes;if(/bloqueado/.test(String(e&&e.message||''))){syncPend=false;setSync('Alteração bloqueada',true);toast(e.message);return}syncErr=true;setSync('Erro ao salvar. Tentando de novo…',true);toast('Erro ao salvar: '+(e&&e.message||e));clearTimeout(save._t);save._t=setTimeout(flush,6000)}
 }
 window.addEventListener('beforeunload',e=>{if(GAS&&syncPend){e.preventDefault();e.returnValue=''}});
 function novosDados(){S=seed();try{exemplos()}catch(e){}return S}
@@ -1819,6 +1833,7 @@ function migrar(){ // completa campos novos em dados antigos
     if(!p.templateId)p.templateId='executivo';
     p.modoPreco=modoPrecoDe(p);
     if(p.status&&p.status!=='rascunho'&&!p.parametros)p.parametros=parametrosDe(p);
+    else if(p.parametros&&p.parametros.hsp===undefined)p.parametros=Object.assign(parametrosDe(p),p.parametros);
     if(!Array.isArray(p.imagens))p.imagens=[];
     p.imagens=normalizarImagens(p.imagens);
     if(p.snap&&Array.isArray(p.snap.imagens))p.snap.imagens=normalizarImagens(p.snap.imagens).filter(temImg);
@@ -2035,20 +2050,24 @@ const _obsTab=new MutationObserver(()=>{cancelAnimationFrame(_obsTab._r);_obsTab
 document.addEventListener('DOMContentLoaded',()=>{['view','mbox'].forEach(id=>{const el=document.getElementById(id);if(el)_obsTab.observe(el,{childList:true,subtree:true})})});
 
 /* ===================== Cálculos ===================== */
-function fioBPct(ano){const t=S.cfg.fioBPct;const ks=Object.keys(t).map(Number).sort();if(ano<=ks[0])return t[ks[0]]/100;for(let i=ks.length-1;i>=0;i--)if(ano>=ks[i])return t[ks[i]]/100;return 1}
+function fioBPct(ano,tab){const t=tab||S.cfg.fioBPct;const ks=Object.keys(t).map(Number).sort();if(ano<=ks[0])return t[ks[0]]/100;for(let i=ks.length-1;i>=0;i--)if(ano>=ks[i])return t[ks[i]]/100;return 1}
 /* ---- Parâmetros da proposta: na emissão, guardamos as tabelas, taxas e regras usadas.
    Depois disso, a proposta só muda se for reemitida. Antes da emissão (rascunho), usa os valores atuais. ---- */
 function parametrosDe(p){
-  const pr=S.cfg.precificacao||{},kits={};
+  const pr=S.cfg.precificacao||{},c=S.cfg,kits={};
   S.kits.forEach(k=>{if(num(k.precoTabela))kits[k.id]=num(k.precoTabela)});
-  return {emitidoEm:todayISO(),margemMin:num(S.cfg.margemMin),iof:JSON.parse(JSON.stringify(S.cfg.iof||{})),
-    financeiras:JSON.parse(JSON.stringify(S.cfg.financeiras||[])),precoTabelaKits:kits,
+  return {emitidoEm:todayISO(),margemMin:num(c.margemMin),iof:JSON.parse(JSON.stringify(c.iof||{})),
+    financeiras:JSON.parse(JSON.stringify(c.financeiras||[])),precoTabelaKits:kits,
+    hsp:(c.hsp||[]).map(num),fioBPct:JSON.parse(JSON.stringify(c.fioBPct||{})),cdi:num(c.cdi),poupanca:num(c.poupanca),lat:num(c.lat),standbyW:num(c.standbyW),
     padroes:{modoPadrao:pr.modoPadrao,markupPadrao:pr.markupPadrao,precoWpPadrao:pr.precoWpPadrao}};
 }
+/* Premissas usadas no cálculo: as congeladas na emissão (se existirem) ou as atuais da configuração */
 function cfgVivo(p){
-  const f=p&&p.parametros;
-  return f?{financeiras:f.financeiras||[],iof:f.iof||{},margemMin:f.margemMin,kits:f.precoTabelaKits||{}}
-    :{financeiras:S.cfg.financeiras||[],iof:S.cfg.iof||{},margemMin:S.cfg.margemMin,kits:null};
+  const f=p&&p.parametros,c=S.cfg,pick=(k,live)=>(f&&f[k]!==undefined)?f[k]:live;
+  return {hsp:pick('hsp',c.hsp),fioBPct:pick('fioBPct',c.fioBPct),cdi:pick('cdi',c.cdi),poupanca:pick('poupanca',c.poupanca),
+    lat:pick('lat',c.lat),standbyW:pick('standbyW',c.standbyW),
+    financeiras:f?(f.financeiras||[]):(c.financeiras||[]),iof:f?(f.iof||{}):(c.iof||{}),
+    margemMin:(f&&f.margemMin!==undefined)?f.margemMin:c.margemMin,kits:f?(f.precoTabelaKits||{}):null};
 }
 /* ---- Precificação: 6 formas de formar o preço final. Cada orçamento escolhe a sua; as regras padrão ficam na aba Precificação ---- */
 const MODOS_PRECO={
@@ -2059,6 +2078,8 @@ const MODOS_PRECO={
   tabela:{label:'Tabela do kit',desc:'Usa o preço de tabela cadastrado no kit escolhido, ajustado pelo número de módulos.'},
   parcela:{label:'Parcela desejada',desc:'Você informa a parcela que o cliente aceita; o sistema calcula quanto ela financia, e esse é o preço.'}
 };
+const MODOS_QUANDO={margem:'Quando você quer garantir um lucro mínimo',total:'Quando o preço já foi negociado',markup:'Quando você pensa em multiplicar o custo',wp:'Para comparar propostas por potência',tabela:'Para vendas padronizadas por kit',parcela:'Quando o cliente decide pela parcela'};
+function setModoPreco(pid,v){const p=S.propostas.find(x=>x.id===pid);if(!p||p.status!=='rascunho'||!MODOS_PRECO[v])return;p.modoPreco=v;save();viewProposta(pid)}
 function modoPrecoDe(p){let m=(p&&p.modoPreco)||'margem';if(m==='preco')m='total';return MODOS_PRECO[m]?m:'margem'}
 /* Preço antes do arredondamento. x = {diretos, com, imp, kwp, nMod} */
 function precoPorModo(p,x){
@@ -2095,7 +2116,7 @@ function perdasDet(p){
    TODO-VERIFICAR contra PVGIS/PVsyst para Pelotas antes de usar em contratos. */
 function fatorOrient(p){
   if(p.azim===undefined)return num(p.orientacao)/100;
-  const lat=Math.abs(num(S.cfg.lat)||31.77),b=Math.max(0,Math.min(90,num(p.incl))),az=Math.min(180,Math.abs(num(p.azim)));
+  const lat=Math.abs(num(cfgVivo(p).lat)||31.77),b=Math.max(0,Math.min(90,num(p.incl))),az=Math.min(180,Math.abs(num(p.azim)));
   const perdaT=Math.min(.6,0.00013*Math.pow(b-lat,2));
   const k=Math.min(.45,.30*b/30);
   const perdaA=k*(1-Math.cos(az*Math.PI/180))/2;
@@ -2117,7 +2138,7 @@ function simFluxo(p,x,r){
   const trVal=(p.trocaInvValor!==undefined&&p.trocaInvValor!=='')?num(p.trocaInvValor):x.invCusto;
   let acum=-x.final,payback=null,credito=0,econ1=0,cs1=0,cc1=0,econBruta=0,liqTot=0,omTot=0,trTot=0;const fluxo=[];const cf=[-x.final];
   for(let y=0;y<25;y++){
-    const t=num(p.tarifa)*Math.pow(1+r,y),fb=num(p.fioB)*Math.pow(1+r,y),pct=fioBPct(ano0+y),fd=(1-d1)*Math.pow(1-deg,y);
+    const t=num(p.tarifa)*Math.pow(1+r,y),fb=num(p.fioB)*Math.pow(1+r,y),pct=fioBPct(ano0+y,cfgVivo(p).fioBPct),fd=(1-d1)*Math.pow(1-deg,y);
     let e=0,cs=0,cc=0;
     for(let m=0;m<12;m++){
       const c=x.cons[m],g=x.gerMes[m]*fd;
@@ -2133,13 +2154,13 @@ function simFluxo(p,x,r){
     if(payback===null&&acum>=0&&liq>0)payback=y+(-antes)/liq;
     fluxo.push({ano:ano0+y,econ:e,om,troca:tr,liq,acum});
   }
-  const tma=num((p.tma!==undefined&&p.tma!==''?p.tma:S.cfg.cdi)||0)/100;
+  const tma=num((p.tma!==undefined&&p.tma!==''?p.tma:cfgVivo(p).cdi)||0)/100;
   const vpl=cf.reduce((a,v,i)=>a+v/Math.pow(1+tma,i),0);
   return {fluxo,payback,econ1,contaAtual:cs1/12,contaNova1:cc1/12,econBruta,liqTot,omTot,trTot,trVal,tir:tirDe(cf),vpl,tma};
 }
 function calcProp(p0,opId){
   const p=pEfetiva(p0,opId);
-  const cfg=S.cfg;
+  const cfg=cfgVivo(p);
   const cons=p.modoConsumo==='mensal'?p.consumoMes.map(num):Array(12).fill(num(p.consumoMedio));
   const consAno=cons.reduce((a,b)=>a+b,0),media=consAno/12;
   const disp=DISP[p.ligacao]||30;
@@ -2205,7 +2226,7 @@ function pagtoOpcoes(p,final,fins){
 function calcBackup(p){
   const cg=(p.cargas||[]).filter(c=>num(c.w)>0&&num(c.qtd)>0);
   const Edia=cg.reduce((a,c)=>a+num(c.w)*num(c.qtd)*num(c.h)/1000,0),Ppk=cg.reduce((a,c)=>a+num(c.w)*num(c.qtd),0)/1000;
-  const H=num(p.horasQueda)||8,stby=num(S.cfg.standbyW||40)/1000,pmed=cg.length?Edia/24+stby:0;
+  const H=num(p.horasQueda)||8,stby=num(cfgVivo(p).standbyW||40)/1000,pmed=cg.length?Edia/24+stby:0;
   const opcs=listaOps(p).map(id=>{const c=calcProp(p,id);const util=c.bat*0.9;const aut=pmed>0?util/pmed:0;
     return {id,nome:nomeOp(p,id),bat:c.bat,backupKw:c.backupKw,aut,okH:c.bat>0&&aut>=H,okPk:c.backupKw>=Ppk&&Ppk>0,temBackup:c.backupKw>0}});
   return {cg,Edia,Ppk,H,pmed,kwhNec:pmed*H/0.9,opcs};
@@ -2476,11 +2497,11 @@ function viewProposta(id){
   if(!p.tipoProposta)p.tipoProposta='ongrid';
   if(!p.templateId)p.templateId='executivo';
   const tabs=tabsDe(p);if(!tabs.some(t=>t.i===propTab))propTab=tabs[0].i;
-  const ro=['aceita','recusada'].includes(p.status);
+  const ro=p.status!=='rascunho';
   const tp=TIPOS_PROP[p.tipoProposta]||TIPOS_PROP.ongrid;
   setHead(`Proposta ${numP(p)}`,(p.nome||'Nova proposta')+' · '+tp.label+' · '+STATUS_PROP[p.status][0]+(ro?' · somente leitura':''),
     `<button class="btn" onclick="go('propostas')">← Voltar</button>${ro?`<button class="btn" onclick="novaVersao('${p.id}')">Nova versão</button>`:`<button class="btn" onclick="save();toast('Rascunho salvo')">Salvar</button>`}<button class="btn ok" onclick="go('pv-${p.id}')">👁 Ver como cliente</button>`);
-  V(`<div class="tpl-bar">
+  V(`${ro&&!['aceita','recusada'].includes(p.status)?'<div class="hint" style="margin-bottom:12px">🔒 Proposta enviada ao cliente. Para alterar, use <b>Nova versão</b>: a versão enviada fica guardada no histórico.</div>':''}<div class="tpl-bar">
     <span class="pill ${tp.badge}">${tp.ic} ${tp.label}</span>
     <label class="small muted" style="display:flex;align-items:center;gap:6px">Modalidade:
       <select class="btn sm" ${ro?'disabled':''} onchange="trocarTipoProp('${p.id}',this.value)">${Object.values(TIPOS_PROP).map(t=>`<option value="${t.k}" ${p.tipoProposta===t.k?'selected':''}>${t.ic} ${t.label}</option>`).join('')}</select>
@@ -2582,26 +2603,33 @@ function tabHtml(p){
       <td><input data-f="it.${i}.custo" type="number" step="any" value="${esc(it.custo)}" style="width:100px;border:1px solid var(--line);border-radius:6px;padding:5px;text-align:right"></td>
       <td class="num">${brl(num(it.qtd)*num(it.custo))}</td><td><button class="btn sm danger" onclick="rmItem('${p.id}',${i})">✕</button></td></tr>`).join('')}</table>`:`<div class="empty">${p.tipoProposta==='eletrica'?'Nenhum serviço/material ainda. Use os botões rápidos acima ou "+ Item".':'Nenhum item. Escolha um kit na aba 2 ou adicione manualmente.'}</div>`}
     <h3 style="margin-top:18px">Outros custos</h3><div class="fg">${inp(p,'projeto',p.tipoProposta==='eletrica'?'ART / Projeto / Taxas (R$)':'Projeto e homologação (R$)')}${inp(p,'frete','Deslocamento / Frete (R$)')}</div>`;
-  case 3:{const m=modoPrecoDe(p),info=MODOS_PRECO[m],cv=cfgVivo(p),k=S.kits.find(x=>x.id===p.kitId),cc=calcProp(p),q=p.parcela||{},fins=cfgVivo(p).financeiras;
-    const ops=Object.entries(MODOS_PRECO).map(([v,o])=>`<option value="${v}" ${v===m?'selected':''}>${esc(o.label)}</option>`).join('');
+  case 3:{const m=modoPrecoDe(p),info=MODOS_PRECO[m],k=S.kits.find(x=>x.id===p.kitId),cc=calcProp(p),cv=cfgVivo(p),q=p.parcela||{},fins=cv.financeiras;
+    const cartoes=Object.entries(MODOS_PRECO).map(([v,o])=>{const r=calcProp(Object.assign({},p,{modoPreco:v})),preenchida={margem:p.margem!==undefined&&p.margem!=='',total:num(p.preco)>0,markup:p.markup!==undefined&&p.markup!=='',wp:num(p.precoWp)>0,tabela:!!p.kitId,parcela:num((p.parcela||{}).valor)>0}[v],ok=r.final>0&&preenchida,red=ok&&r.abaixoMin;
+      return `<button type="button" class="pf-card ${v===m?'on':''}" onclick="setModoPreco('${p.id}','${v}')" aria-pressed="${v===m}">
+        <div class="row between" style="gap:6px"><b>${esc(o.label)}</b>${v===m?'<span class="pill g">em uso</span>':''}</div>
+        <div class="pf-preco">${ok?brl(r.final):'—'}</div>
+        <div class="small">Margem esperada: <b style="color:${red?'var(--red)':'var(--green)'}">${ok?n2(r.margemF*100,1)+'%':'—'}</b> · lucro ${ok?brl(r.lucro):'—'}</div>
+        <div class="small muted">${esc(MODOS_QUANDO[v]||'')}</div></button>`}).join('');
     let campo='';
     if(m==='margem')campo=inp(p,'margem','Margem desejada (%)');
-    else if(m==='total')campo=inp(p,'preco','Preço final ao cliente (R$)');
-    else if(m==='markup')campo=inp(p,'markup','Markup sobre o custo (%)');
+    else if(m==='total')campo=inp(p,'preco','Preço final (R$)');
+    else if(m==='markup')campo=inp(p,'markup','Markup sobre o custo (%)')+`<div class="small muted" style="align-self:end">Markup de ${n0(num(p.markup))}% equivale a margem de ${num(p.markup)?n2(num(p.markup)/(100+num(p.markup))*100,1):'0'}% sobre o preço, antes de comissão e impostos.</div>`;
     else if(m==='wp')campo=inp(p,'precoWp','Preço por Wp (R$/Wp)')+`<div class="small muted" style="align-self:end">= ${brl(cc.kwp*1000*num(p.precoWp))} para ${n2(cc.kwp)} kWp</div>`;
-    else if(m==='tabela')campo=k&&num(k.precoTabela)?`<div class="hint" style="grid-column:1/-1">Preço de tabela de <b>${esc(k.nome)}</b>: ${brl(cc.preco)} (${num(k.precoTabela)?'ajustado para '+cc.nMod+' módulos':''}).</div>`
-      :(k?'<div class="err" style="grid-column:1/-1">Este kit não tem preço de tabela. Cadastre em Precificação.</div>':'<div class="err" style="grid-column:1/-1">Escolha um kit na aba 2 para usar o preço de tabela.</div>');
+    else if(m==='tabela')campo=`<label class="f w2">Kit (preço de tabela)<select onchange="aplicarKit('${p.id}',this.value)"><option value="">— escolha um kit —</option>${S.kits.map(x=>`<option value="${x.id}" ${x.id===p.kitId?'selected':''}>${esc(x.nome)}</option>`).join('')}</select></label>`
+      +(k&&cc.final>0?`<div class="hint" style="grid-column:1/-1">Preço de tabela de <b>${esc(k.nome)}</b>: ${brl(cc.final)} (ajustado para ${cc.nMod} módulos).</div>`:`<div class="err" style="grid-column:1/-1">${k?'Este kit não tem preço de tabela. Cadastre em Precificação.':'Escolha o kit acima para usar o preço de tabela.'}</div>`);
     else campo=`<label class="f w2">Financeira<select data-f="parcela.fin" data-rerender="1">${fins.map((f,i)=>`<option value="${i}" ${String(q.fin||0)===String(i)?'selected':''}>${esc(f.nome)} · ${n2(num(f.taxa))}% a.m.</option>`).join('')}</select></label>
       <label class="f">Parcela que o cliente aceita (R$)<input data-f="parcela.valor" type="number" step="any" data-num="1" value="${esc(q.valor??'')}"></label>
       <label class="f">Prazo (meses)<input data-f="parcela.prazo" type="number" data-num="1" value="${esc(q.prazo??60)}"></label>
-      <div class="small muted" style="grid-column:1/-1">Financia ${brl(Math.max(0,cc.final-num(p.entrada)))} (entrada de ${brl(num(p.entrada))} conforme a aba 6).</div>`;
-    return `<h3>Forma de formar o preço</h3><div class="fg">
-      <label class="f w2">Como formar o preço deste orçamento<select data-f="modoPreco" data-rerender="1">${ops}</select></label>
-      <div class="small muted" style="grid-column:1/-1">${esc(info.desc)}</div>
-      ${campo}
-      ${inp(p,'comissao','Comissão (%)')}${inp(p,'impostos','Impostos (%)')}${inp(p,'desconto','Desconto (R$)')}
-      <label class="f w2">Observações para o cliente<textarea data-f="obs" rows="2">${esc(p.obs)}</textarea></label>
-    </div><div class="small muted" style="margin-top:8px">Margem = lucro ÷ preço final. Comissão e impostos incidem sobre o preço. Margem mínima: ${cv.margemMin}%. Valores padrão de cada forma: aba <b>Precificação</b>.</div>${p.parametros?`<div class="hint" style="margin-top:10px">Tabelas, taxas e regras congeladas na emissão de ${fdata(p.parametros.emitidoEm)}. Para usar os valores atuais do sistema, reemita a proposta.</div>`:'<div class="small muted" style="margin-top:10px">Proposta em rascunho: usa as tabelas e taxas atuais. Ao emitir, elas ficam congeladas.</div>'}`;}
+      ${inp(p,'entrada','Entrada (R$)')}
+      <div class="small muted" style="grid-column:1/-1">Financia ${brl(Math.max(0,cc.final-num(p.entrada)))} de um preço final de ${brl(cc.final)}.</div>`;
+    return `<h3>Forma de formar o preço</h3>
+      <div class="small muted" style="margin-bottom:10px">Compare as seis formas com as mesmas premissas. A selecionada é a que vale para esta proposta.</div>
+      <div class="pf-grid" role="group" aria-label="Forma de formar o preço">${cartoes}</div>
+      <div class="small muted" style="margin:12px 0 8px">${esc(info.desc)}</div>
+      <div class="fg">${campo}${inp(p,'comissao','Comissão (%)')}${inp(p,'impostos','Impostos (%)')}${inp(p,'desconto','Desconto (R$)')}
+        <label class="f w2">Observações para o cliente<textarea data-f="obs" rows="2">${esc(p.obs)}</textarea></label></div>
+      <div class="small muted" style="margin-top:8px">Margem = lucro ÷ preço final. Comissão e impostos incidem sobre o preço. Margem mínima: ${cv.margemMin}%.</div>
+      ${p.parametros?`<div class="hint" style="margin-top:10px">Tabelas, taxas e premissas congeladas na emissão de ${fdata(p.parametros.emitidoEm)}. Para usar os valores atuais, crie uma nova versão.</div>`:'<div class="small muted" style="margin-top:10px">Rascunho: usa as tabelas e taxas atuais. Ao emitir, elas ficam congeladas.</div>'}`;}
   case 4:return `<h3>Premissas de retorno</h3><div class="fg">${inp(p,'reajuste','Reajuste da tarifa (% ao ano)')}${p.degrad1!==undefined?inp(p,'degrad1','Degradação no 1º ano (%)'):''}${inp(p,'degradacao',p.degrad1!==undefined?'Degradação a partir do 2º ano (% ao ano)':'Degradação dos módulos (% ao ano)')}
     ${p.degrad1!==undefined?`${inp(p,'omPct','O&M anual (% do investimento)')}${inp(p,'inflacao','Inflação do O&M (% ao ano)')}${inp(p,'trocaInvAno','Troca do inversor no ano (0 = não troca)')}${inp(p,'trocaInvValor','Custo da troca (R$; vazio = automático)')}${inp(p,'tma','Taxa de desconto do VPL (% a.a.; vazio = CDI)')}`:''}</div>
     <div class="hint" style="margin-top:10px">Lei 14.300: o Fio B incide sobre a energia compensada, em percentual escalonado por ano (${Object.entries(S.cfg.fioBPct).map(([a,v])=>a+': '+v+'%').join(' · ')}), além do custo de disponibilidade. A tabela pode ser editada nas Configurações. <b>TODO-VERIFICAR</b> a regra depois de 2028. Energia consumida na hora da geração não paga Fio B.</div>`;
@@ -2626,14 +2654,14 @@ function tabHtml(p){
     <div class="small muted" style="margin-top:8px">O cliente escolhe a forma no aceite; os títulos a receber são criados conforme a escolha. A entrada do financiamento fica na aba 6.</div>`}
   case 9:{const cc=calcProp(p);const dif=p.snap&&(Math.abs(cc.final-p.snap.final)>0.5||(p.snap.opcoes||[]).some(o=>Math.abs(calcProp(p,o.id).final-o.final)>0.5));const lk=p.status!=='rascunho'?linkPublico(p):'';
     const imgs=Array.isArray(p.imagens)?p.imagens:[];
-    return `${dif?`<div class="err" style="margin-bottom:12px">A proposta foi alterada depois da emissão: o cliente ainda vê ${brl(p.snap.final)}. Reemita para atualizar o link.</div>`:''}<h3>Emitir e enviar</h3>${lk?`<div class="small" style="margin-bottom:10px">Link do cliente: <span class="mono">${esc(lk)}</span></div>`:(p.status!=='rascunho'&&GAS?'<div class="hint" style="margin-bottom:10px">Configure a URL pública em Configurações para gerar o link do cliente.</div>':(!GAS?'<div class="hint" style="margin-bottom:10px">Modo navegador: os dados ficam só neste navegador, então não existe link para o cliente. Envie o PDF ou o .docx. O link de proposta funciona no modo Google (Apps Script).</div>':''))}<div class="fg">${inp(p,'validade','Validade (dias)')}</div>
+    return `${dif?`<div class="err" style="margin-bottom:12px">A proposta foi alterada depois da emissão: o cliente ainda vê ${brl(p.snap.final)}. Reemita para atualizar o link.</div>`:''}<h3>Emitir e enviar</h3>${p.integridade?`<div class="small muted" style="margin-bottom:8px">Código de integridade: <span class="mono">${esc(p.integridade.slice(0,16))}…</span> · emitida em ${fdata(p.emitidaEm)} · válida até ${fdata(addDays(p.emitidaEm||todayISO(),num(p.validade)||15))}</div>`:''}${lk?`<div class="small" style="margin-bottom:10px">Link do cliente: <span class="mono">${esc(lk)}</span></div>`:(p.status!=='rascunho'&&GAS?'<div class="hint" style="margin-bottom:10px">Configure a URL pública em Configurações para gerar o link do cliente.</div>':(!GAS?'<div class="hint" style="margin-bottom:10px">Modo navegador: os dados ficam só neste navegador, então não existe link para o cliente. Envie o PDF ou o .docx. O link de proposta funciona no modo Google (Apps Script).</div>':''))}<div class="fg">${inp(p,'validade','Validade (dias)')}</div>
     <h3 style="margin-top:18px">Imagens da proposta (até 3 opcionais)</h3>
     <div class="small muted" style="margin-bottom:8px">Anexe fotos do telhado, layout 3D, padrão elétrico ou equipamentos. Elas aparecem na página do cliente e no PDF (se vazio, usa as imagens padrão do template, caso cadastradas).</div>
     <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">${[0,1,2].map(idx=>{const im=imgs[idx];return `<div class="img-slot">
       ${temImg(im)?`<img ${imgAttr(im)} alt="Imagem ${idx+1}"><input placeholder="Legenda (ex.: Vista do telhado)" value="${esc(im.legenda||'')}" onchange="setPropImgLegenda('${p.id}',${idx},this.value)" style="border:1px solid var(--line);border-radius:6px;padding:5px;font-size:12px"><div class="row between"><label class="btn sm" style="cursor:pointer">Trocar<input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="uploadPropImg('${p.id}',${idx},this)"></label><button class="btn sm danger" onclick="rmPropImg('${p.id}',${idx})">Remover</button></div>`:`<div class="small muted" style="text-align:center;padding:18px 6px">Imagem ${idx+1} (opcional)</div><label class="btn sm" style="text-align:center;cursor:pointer">📷 Escolher imagem<input type="file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="uploadPropImg('${p.id}',${idx},this)"></label>`}
     </div>`}).join('')}</div>
     <div class="row" style="margin-top:14px">
-      <button class="btn sun" onclick="emitir('${p.id}')">📤 ${p.status==='rascunho'?'Emitir proposta':'Reemitir'}</button>
+      ${p.status==='rascunho'?`<button class="btn sun" onclick="emitir('${p.id}')">📤 Emitir proposta</button>`:''}
       <button class="btn" onclick="exportarDocx('${p.id}')">📄 Exportar .docx</button>
       ${p.status!=='rascunho'?`<button class="btn ${p.status==='aceita'?'ok':''}" onclick="ctModalNovo('${p.id}')">✍ Gerar contrato</button>`:''}
       ${p.status!=='rascunho'?`<button class="btn" onclick="go('pv-${p.id}')">Abrir a página do cliente</button><button class="btn" onclick="copiarWhats('${p.id}')">Copiar mensagem de WhatsApp</button>`:''}
@@ -2661,8 +2689,8 @@ function tabCalc(p){
   if(propTab===2){const g=c.grp;return `<div class="resbox resgrid"><div><small>Kit e equipamentos</small><b>${brl(g.kit)}</b></div><div><small>Estrutura</small><b>${brl(g.estrutura)}</b></div><div><small>Material CA</small><b>${brl(g.ca)}</b></div><div><small>Mão de obra</small><b>${brl(g.servico)}</b></div><div><small>Projeto + frete</small><b>${brl(c.projeto+c.frete)}</b></div><div><small>Outros</small><b>${brl(g.outro)}</b></div><div><small>Custos diretos</small><b>${brl(c.diretos)}</b></div></div>`}
   if(propTab===3){return `${c.abaixoMin?`<div class="err" style="margin-top:14px">A margem final (${n2(c.margemF*100,1)}%) está abaixo da mínima (${S.cfg.margemMin}%). Para emitir, é preciso a autorização do gestor.</div>`:''}<div class="resbox"><table>
     <tr><td>Custos diretos</td><td class="num">${brl(c.diretos)}</td></tr><tr><td>Comissão (${n2(num(p.comissao))}%)</td><td class="num">${brl(c.comV)}</td></tr><tr><td>Impostos (${n2(num(p.impostos))}%)</td><td class="num">${brl(c.impV)}</td></tr>
-    <tr><td>Preço de venda</td><td class="num">${brl(c.preco)}</td></tr><tr><td>Desconto</td><td class="num">− ${brl(num(p.desconto))}</td></tr>
-    <tr><td><b>Preço final ao cliente</b></td><td class="num"><b>${brl(c.final)}</b></td></tr><tr><td><b>Lucro</b></td><td class="num"><b style="color:${c.lucro<0?'var(--red)':'var(--green)'}">${brl(c.lucro)}</b></td></tr>
+    <tr><td>Preço antes do desconto</td><td class="num">${brl(c.preco)}</td></tr><tr><td>Desconto</td><td class="num">− ${brl(num(p.desconto))}</td></tr>
+    <tr><td><b>Preço final</b></td><td class="num"><b>${brl(c.final)}</b></td></tr><tr><td><b>Lucro</b></td><td class="num"><b style="color:${c.lucro<0?'var(--red)':'var(--green)'}">${brl(c.lucro)}</b></td></tr>
     <tr><td>Margem final</td><td class="num">${c.final?n2(c.margemF*100,1)+'%':'—'}</td></tr><tr><td>Preço por Wp</td><td class="num">${c.porWp?brl(c.porWp):'—'}</td></tr></table></div>`}
   if(propTab===4){
     const max=Math.max(...c.fluxo.map(f=>Math.abs(f.acum)),1);
@@ -2723,11 +2751,11 @@ function emitir(pid){
   const sp=(pagtoDe(p).obra||[]).reduce((a,o)=>a+num(o.pct),0);if(Math.abs(sp-100)>0.01&&(pagtoDe(p).formas||{}).obra!==false)errs.push('Parcelas da obra somando 100%');
   if(errs.length)return toast('Falta: '+errs.join(', '));
   if(c.abaixoMin&&!p.autorizada){return openModal(`<h2>Margem abaixo da mínima</h2><p>A margem final é <b>${n2(c.margemF*100,1)}%</b> e a mínima configurada é <b>${S.cfg.margemMin}%</b>.</p><label class="f">Senha de autorização do gestor${GAS?'':' (no protótipo: 901)'}<input id="aut" type="password"></label><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeModal()">Cancelar</button><button class="btn pri" onclick="if(document.getElementById('aut').value===String(S.cfg.senhaGestor||'901')){const p=S.propostas.find(x=>x.id==='${pid}');p.autorizada=true;logP(p,'Margem abaixo da mínima autorizada');closeModal();emitir('${pid}')}else toast('Autorização inválida')">Autorizar</button></div>`)}
-  p.status='emitida';p.emitidaEm=todayISO();p.token=p.token||token();p.parametros=parametrosDe(p);p.snap=snapshotProp(p);logP(p,'Proposta emitida');
+  p.status='emitida';p.emitidaEm=todayISO();p.token=p.token||token();p.parametros=parametrosDe(p);p.emissoes=(p.emissoes||0)+1;p.snap=snapshotProp(p);logP(p,'Proposta emitida');
   if(p.negocioId){const n=S.negocios.find(x=>x.id===p.negocioId);if(n){n.valor=Math.round(c.final);n.kwp=ehEl?0:+c.kwp.toFixed(2);if(ETAPAS_FUNIL.findIndex(e=>e.k===n.etapa)<3){n.etapa='proposta';n.movidoEm=todayISO()}}}
   save();toast('Proposta emitida. Link do cliente gerado.');viewProposta(pid);
 }
-function novaVersao(pid){const o=S.propostas.find(x=>x.id===pid);const p=JSON.parse(JSON.stringify(o));p.id=uid();p.versao=o.versao+1;p.status='rascunho';p.emitidaEm='';p.aceite=null;p.autorizada=false;p.snap=null;delete p.parametros;p.token='';p.log=[];logP(p,`Criada a partir da v${o.versao}`);S.propostas.push(p);save();go('prop-'+p.id)}
+function novaVersao(pid){const o=S.propostas.find(x=>x.id===pid);const p=JSON.parse(JSON.stringify(o));p.id=uid();p.versao=o.versao+1;p.status='rascunho';p.emitidaEm='';p.aceite=null;p.autorizada=false;p.snap=null;delete p.parametros;delete p.integridade;p.emissoes=0;p.token='';p.log=[];logP(p,`Criada a partir da v${o.versao}`);S.propostas.push(p);save();go('prop-'+p.id)}
 function snapOpcao(p,id){
   const c=calcProp(p,id),q=pEfetiva(p,id),kit=S.kits.find(k=>k.id===q.kitId);
   const bk=calcBackup(p).opcs.find(o=>o.id===id)||{};
