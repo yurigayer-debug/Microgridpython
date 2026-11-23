@@ -1847,7 +1847,7 @@ function migrar(){ // completa campos novos em dados antigos
 }
 async function loadGas(){
   setSync((window.DELTA_SERVIDOR?'Carregando do servidor…':'Carregando da planilha…'));
-  const r=await gas('carregarTudo');USER=r.usuario||'';LINKS=r.links||{};PERFIL_GAS=r.perfil||null;
+  const r=await gas('carregarTudo');USER=r.usuario||'';PAPEL_USU=r.papel||'gestor';LINKS=r.links||{};PERFIL_GAS=r.perfil||null;
   const urlSrv=r.urlPublica||''; // servidor Docker informa a própria URL pública
   setTimeout(()=>{if(urlSrv&&S&&S.cfg&&!S.cfg.urlPublica){S.cfg.urlPublica=urlSrv;save()}},0);
   const vazio=COLS.every(c=>!(r.dados[c]||[]).length)&&!r.config;
@@ -2093,12 +2093,14 @@ function sugBlocoHtml(p){const sug=sugerirKit(p),c=calcProp(p);if(!sug||sug.id==
   return `<div class="hint" style="margin-top:8px">Para ${n2(c.kwpNec)} kWp, sugerimos <b>${esc(sug.nome)}</b>. <button class="btn sm" onclick="aplicarKit('${p.id}','${sug.id}')">Usar sugestão</button></div>`}
 /* O que falta para gerar a cotação (o mesmo critério da emissão, sem o bloqueio de margem) */
 function pendenciasEmissao(p){const c=calcProp(p),f=[];if(!String(p.nome||'').trim())f.push('nome do cliente');
-  const cons=p.modoConsumo==='mensal'?(p.consumoMes||[]).reduce((a,x)=>a+num(x),0):num(p.consumoMedio);if(!(cons>0))f.push('consumo');
-  if(!p.modWpInformado||!(num(p.modWp)>0))f.push('potência do módulo FV');if(!num(p.tarifa))f.push('tarifa');if(!(c.final>0))f.push('preço (escolha um kit ou a forma)');return f}
-function vendRodape(p){if(p.status!=='rascunho')return '';const pend=pendenciasEmissao(p);
-  return `<div style="margin-top:12px">${pend.length?`<div class="err" style="margin-bottom:8px">Falta: ${esc(pend.join(', '))}</div>`:'<div class="hint" style="background:var(--pg);border-color:var(--pg);color:var(--pgi)">✓ Pronto para gerar a cotação.</div>'}<button class="btn sun" style="width:100%;min-height:50px" onclick="emitir('${p.id}')" ${pend.length?'disabled':''}>📤 Gerar cotação</button></div>`}
-function passoBarVHtml(p){const c=calcProp(p),pend=pendenciasEmissao(p);
-  return `<div class="pb-info"><span>${pend.length?'Falta: '+esc(pend.join(', ')):'Pronto para gerar'}</span><span class="pb-preco">${brl(c.final)}</span></div><div class="pb-botoes"><span></span><button class="btn ok pb-btn" onclick="emitir('${p.id}')" ${pend.length?'disabled':''}><span class="pb-txt"><small>Concluir</small>Gerar cotação</span><span class="pb-seta">📤</span></button></div>`}
+  if(p.tipoProposta==='eletrica'){if(!String(p.elEscopo||'').trim())f.push('escopo do serviço');}
+  else{const cons=p.modoConsumo==='mensal'?(p.consumoMes||[]).reduce((a,x)=>a+num(x),0):num(p.consumoMedio);
+    if(!(cons>0))f.push('consumo');if(!num(p.tarifa))f.push('tarifa');if(!p.modWpInformado||!(num(p.modWp)>0))f.push('potência do módulo FV');}
+  if(!(c.final>0))f.push('preço (escolha um kit ou a forma)');return f}
+function vendRodape(p){if(p.status!=='rascunho')return '';const pend=pendenciasEmissao(p),bloq=pend.length||!podeEmitir();
+  return `<div style="margin-top:12px">${!podeEmitir()?'<div class="hint" style="margin-bottom:8px">Seu perfil não emite propostas. Envie ao gestor para emitir.</div>':''}${pend.length?`<div class="err" style="margin-bottom:8px">Falta: ${esc(pend.join(', '))}</div>`:(podeEmitir()?'<div class="hint" style="background:var(--pg);border-color:var(--pg);color:var(--pgi)">✓ Pronto para gerar a cotação.</div>':'')}<button class="btn sun" style="width:100%;min-height:50px" onclick="emitir('${p.id}')" ${bloq?'disabled':''}>${podeEmitir()?'📤 Gerar cotação':'Aguardando o gestor'}</button></div>`}
+function passoBarVHtml(p){const c=calcProp(p),pend=pendenciasEmissao(p),bloq=pend.length||!podeEmitir();
+  return `<div class="pb-info"><span>${!podeEmitir()?'Só o gestor emite':(pend.length?'Falta: '+esc(pend.join(', ')):'Pronto para gerar')}</span><span class="pb-preco">${brl(c.final)}</span></div><div class="pb-botoes"><span></span><button class="btn ok pb-btn" onclick="emitir('${p.id}')" ${bloq?'disabled':''}><span class="pb-txt"><small>Concluir</small>${podeEmitir()?'Gerar cotação':'Aguardando gestor'}</span><span class="pb-seta">📤</span></button></div>`}
 /* Depois de gerada: o que fazer com a cotação, sem sair da tela */
 function envioHtml(p){const lk=linkPublico(p),val=addDays(p.emitidaEm||todayISO(),num(p.validade)||15);
   return `<div class="card" style="border:2px solid var(--green);margin-bottom:12px"><b>✓ Cotação gerada</b> <span class="small muted">${numP(p)} · válida até ${fdata(val)}</span>
@@ -2106,13 +2108,9 @@ function envioHtml(p){const lk=linkPublico(p),val=addDays(p.emitidaEm||todayISO(
     <div class="small muted" style="margin-top:8px">Para alterar esta cotação, use <b>Nova versão</b> no topo.</div></div>`}
 /* Tela do modo vendedor: cliente, consumo, kit e preço em uma página só */
 function viewVendedor(p,ro){
-  const c=calcProp(p);
-  return `${ro?envioHtml(p):''}
-  <div class="row between" style="margin-bottom:10px"><span class="small muted">Cotação rápida</span><button class="btn sm" onclick="trocarModoCot('engenheiro')">Modo completo ›</button></div>
-  <div class="split">
-    <div class="card" id="tabbody" ${ro?'style="pointer-events:none;opacity:.85"':''}>
-      <h3>Cliente</h3>
-      <div class="fg">${inp(p,'nome','Nome do cliente *','text','class="w2"')}${inp(p,'fone','WhatsApp','tel')}${inp(p,'cidade','Cidade','text')}</div>
+  const ehEl=p.tipoProposta==='eletrica',c=calcProp(p);
+  const cliente=`<h3>Cliente</h3><div class="fg">${inp(p,'nome','Nome do cliente *','text','class="w2"')}${inp(p,'fone','WhatsApp','tel')}${inp(p,'cidade','Cidade','text')}</div>`;
+  const solar=ehEl?'':`
       <h3 style="margin-top:16px">Consumo e ligação</h3>
       ${p.modoConsumo==='mensal'?'<div class="hint" style="margin-bottom:10px">Esta cotação usa consumo mês a mês. Digite a média aqui para usar o modo vendedor, ou ajuste no modo completo.</div>':''}
       <div class="fg">${inp(p,'consumoMedio','Consumo médio (kWh/mês) *')}${inp(p,'tarifa','Tarifa B1 com impostos (R$/kWh) *')}
@@ -2121,25 +2119,43 @@ function viewVendedor(p,ro){
       <label class="f">Potência do módulo FV disponível (Wp) *<input data-f="modWp" type="number" step="1" placeholder="ex.: 610" value="${p.modWpInformado?esc(p.modWp):''}"></label>
       <div class="small muted" style="margin:4px 0 10px">${p.modWpInformado?'Informe o kit abaixo ou use a sugestão.':'Informe a potência do módulo para ver a sugestão de kit.'}</div>
       <select class="btn" style="width:100%" onchange="aplicarKit('${p.id}',this.value)"><option value="">— escolha um kit —</option>${S.kits.map(k=>`<option value="${k.id}" ${k.id===p.kitId?'selected':''}>${esc(k.nome)}</option>`).join('')}</select>
-      <div id="sugBloco">${sugBlocoHtml(p)}</div>
-      <h3 style="margin-top:16px">Preço</h3>
-      ${formaPrecoBloco(p)}
-      <details style="margin-top:14px"><summary class="small" style="cursor:pointer;font-weight:700">Mais opções (opcional)</summary>
+      <div id="sugBloco">${sugBlocoHtml(p)}</div>`;
+  const servico=ehEl?`
+      <h3 style="margin-top:16px">Serviço elétrico</h3>
+      <label class="f w2">Escopo do serviço *<textarea data-f="elEscopo" rows="3" placeholder="Ex.: adequação do padrão de entrada e instalação de carregador veicular">${esc(p.elEscopo||'')}</textarea></label>
+      <div class="fg" style="margin-top:8px">${inp(p,'elPrazo','Prazo (dias úteis)')}<label class="f">Garantia<input data-f="elGarantia" type="text" value="${esc(p.elGarantia||'')}"></label></div>
+      <label class="small" style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" data-f="elArt" ${p.elArt!==false?'checked':''}> Inclui ART/TRT</label>`:'';
+  const formas=[['pix','PIX à vista'],['cartao','Cartão'],['obra','Parcelas da obra']].concat(ehEl?[]:[['fin','Financiamento']]);
+  const detalhes=`<details style="margin-top:14px"><summary class="small" style="cursor:pointer;font-weight:700">Mais opções (opcional)</summary>
         <div class="fg" style="margin-top:8px">${inp(p,'doc','CPF / CNPJ','text')}${inp(p,'email','E-mail','email')}
-          <label class="f">Perfil de consumo<select data-f="perfil" data-rerender="1">${Object.entries(PERFIS).map(([k,v])=>`<option value="${k}" ${p.perfil===k?'selected':''}>${v}</option>`).join('')}</select></label>
+          ${ehEl?'':`<label class="f">Perfil de consumo<select data-f="perfil" data-rerender="1">${Object.entries(PERFIS).map(([k,v])=>`<option value="${k}" ${p.perfil===k?'selected':''}>${v}</option>`).join('')}</select></label>
           ${inp(p,'simult','Energia usada na hora da geração (%)')}
           ${inp(p,'azim','Desvio do Norte do telhado (°): 0 = Norte')}${inp(p,'incl','Inclinação do telhado (°)')}
-          ${inp(p,'entrada','Entrada do financiamento (R$)')}${inp(p,'validade','Validade (dias)')}</div>
+          ${inp(p,'entrada','Entrada do financiamento (R$)')}`}
+          ${inp(p,'validade','Validade (dias)')}</div>
         <div class="small muted" style="margin:12px 0 6px">Formas de pagamento oferecidas ao cliente</div>
-        <div class="row" style="flex-wrap:wrap;gap:12px">${(()=>{const g=pagtoDe(p).formas||{};return [['pix','PIX à vista'],['cartao','Cartão'],['obra','Parcelas da obra'],['fin','Financiamento']].map(([k,l])=>`<label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-f="pg.f_${k}" ${g[k]!==false?'checked':''}> ${l}</label>`).join('')})()}</div>
-      </details>
+        <div class="row" style="flex-wrap:wrap;gap:12px">${(()=>{const g=pagtoDe(p).formas||{};return formas.map(([k,l])=>`<label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-f="pg.f_${k}" ${g[k]!==false?'checked':''}> ${l}</label>`).join('')})()}</div>
+      </details>`;
+  return `${ro?envioHtml(p):''}
+  <div class="row between" style="margin-bottom:10px"><span class="small muted">${ehEl?'Cotação rápida · serviço elétrico':'Cotação rápida'}</span><button class="btn sm" onclick="trocarModoCot('engenheiro')">Modo completo ›</button></div>
+  <div class="split">
+    <div class="card" id="tabbody" ${ro?'style="pointer-events:none;opacity:.85"':''}>
+      ${cliente}${solar}${servico}
+      <h3 style="margin-top:16px">Preço</h3>
+      ${formaPrecoBloco(p)}
+      ${detalhes}
     </div>
     <div class="card sum" id="sumbox">${sumHtml(p)}</div>
   </div>
   ${ro?'':`<div class="passobar" id="passobarV">${passoBarVHtml(p)}</div>`}`;
 }
 function setModoPreco(pid,v){const p=S.propostas.find(x=>x.id===pid);if(!p||p.status!=='rascunho'||!MODOS_PRECO[v])return;p.modoPreco=v;save();viewProposta(pid)}
-function modoPrecoDe(p){let m=(p&&p.modoPreco)||'margem';if(m==='preco')m='total';return MODOS_PRECO[m]?m:'margem'}
+/* Perfil de quem usa (vem do servidor; no navegador e no artefato, é sempre gestor) */
+let PAPEL_USU='gestor';
+function podeEmitir(){return PAPEL_USU!=='vendedor'||S.cfg.vendedorEmite!==false}
+/* Formas de preço que fazem sentido para o tipo da proposta: serviço elétrico não usa kit nem potência */
+function modosDoTipo(p){return p&&p.tipoProposta==='eletrica'?['margem','total','markup','parcela']:Object.keys(MODOS_PRECO)}
+function modoPrecoDe(p){let m=(p&&p.modoPreco)||'margem';if(m==='preco')m='total';if(!MODOS_PRECO[m])m='margem';if(!modosDoTipo(p).includes(m))m='margem';return m}
 /* Preço antes do arredondamento. x = {diretos, com, imp, kwp, nMod} */
 function precoPorModo(p,x){
   const m=modoPrecoDe(p),base=Math.max(0.05,1-x.com-x.imp);
@@ -2617,7 +2633,7 @@ document.addEventListener('focusout',()=>setTimeout(()=>{const a=document.active
 const inp=(p,f,label,type='number',extra='')=>{const w=/class="w2"/.test(extra);extra=extra.replace('class="w2"','');return `<label class="f${w?' w2':''}">${label}<input data-f="${f}" type="${type}" value="${esc(p[f])}" ${type==='number'?'step="any"':''} ${extra}></label>`};
 function formaPrecoBloco(p){
 const m=modoPrecoDe(p),info=MODOS_PRECO[m],k=S.kits.find(x=>x.id===p.kitId),cc=calcProp(p),cv=cfgVivo(p),q=p.parcela||{},fins=cv.financeiras;
-    const cartoes=Object.entries(MODOS_PRECO).map(([v,o])=>{const r=calcProp(Object.assign({},p,{modoPreco:v})),preenchida={margem:p.margem!==undefined&&p.margem!=='',total:num(p.preco)>0,markup:p.markup!==undefined&&p.markup!=='',wp:num(p.precoWp)>0,tabela:!!p.kitId,parcela:num((p.parcela||{}).valor)>0}[v],ok=r.final>0&&preenchida,red=ok&&r.abaixoMin;
+    const cartoes=Object.entries(MODOS_PRECO).filter(([v])=>modosDoTipo(p).includes(v)).map(([v,o])=>{const r=calcProp(Object.assign({},p,{modoPreco:v})),preenchida={margem:p.margem!==undefined&&p.margem!=='',total:num(p.preco)>0,markup:p.markup!==undefined&&p.markup!=='',wp:num(p.precoWp)>0,tabela:!!p.kitId,parcela:num((p.parcela||{}).valor)>0}[v],ok=r.final>0&&preenchida,red=ok&&r.abaixoMin;
       return `<button type="button" class="pf-card ${v===m?'on':''}" onclick="setModoPreco('${p.id}','${v}')" aria-pressed="${v===m}">
         <div class="row between" style="gap:6px"><b>${esc(o.label)}</b>${v===m?'<span class="pill g">em uso</span>':''}</div>
         <div class="pf-preco">${ok?brl(r.final):'—'}</div>
@@ -2806,7 +2822,7 @@ function aplicarKit(pid,kid){
 function addItem(pid){const p=S.propostas.find(x=>x.id===pid);p.itens.push({tipo:'Outro',desc:'',un:'un',qtd:1,custo:0});save();viewProposta(pid)}
 function rmItem(pid,i){const p=S.propostas.find(x=>x.id===pid);p.itens.splice(i,1);save();viewProposta(pid)}
 function logP(p,o){(p.log=p.log||[]).push({quando:new Date().toLocaleString('pt-BR'),o})}
-function emitir(pid){
+function emitir(pid){if(!podeEmitir())return toast('Seu perfil não pode emitir propostas. Peça ao gestor para emitir.');
   const p=S.propostas.find(x=>x.id===pid);const c=calcProp(p);const ehEl=p.tipoProposta==='eletrica';
   const errs=[];if(!p.nome.trim())errs.push('Nome do cliente');
   if(!ehEl){if(!c.consAno)errs.push('Consumo');if(!num(p.tarifa))errs.push('Tarifa')}
@@ -3980,6 +3996,7 @@ function viewConfig(){
     <label class="f w2">Assinatura (opcional)<input id="pf_ass" placeholder="Ex.: Yuri · Delta Solar · (53) 99999-9999" value="${esc(meuPerfil().assinatura||'')}"></label>
   </div><div class="row" style="margin-top:10px"><button class="btn" onclick="salvarPerfil()">Salvar meu WhatsApp</button></div></div>
   <div class="card"><h3>Empresa</h3><div class="fg">${f('empresa','Nome','text')}${f('site','Site','text')}${f('cidade','Cidade/UF','text')}${f('whats','WhatsApp principal','text')}${f('whats2','Telefone / WhatsApp 2','text')}${f('whats3','Telefone / WhatsApp 3','text')}${f('horario','Horário de atendimento','text')}<label class="f w2">Endereço completo<input data-c="endereco" type="text" value="${esc(c.endereco||'')}"></label><label class="f w2">Técnicos / equipes (separados por vírgula)<input id="cfg_tec" value="${esc(S.tecnicos.join(', '))}"></label></div></div>
+  <div class="card"><h3>Permissões de cotação</h3><label class="small" style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" id="cfg_vend_emite" ${c.vendedorEmite!==false?'checked':''} style="margin-top:3px"> <span><b>Vendedor pode emitir (gerar) propostas</b><br><span class="muted">Se desligado, quem tem perfil de vendedor (CRM_USUARIOS com #vendedor) monta a cotação, mas só o gestor a emite. O servidor também recusa a emissão.</span></span></label><div class="small muted" style="margin-top:8px">Sem servidor (navegador ou artefato), todos usam o mesmo perfil de gestor, então a regra não se aplica.</div></div>
   <div class="card"><h3>Tarifa de energia (B1 residencial)</h3>${(()=>{const ta=c.tarifaAuto||{},auto=ta.modo!=='manual',srv=!!(window.DELTA_SERVIDOR);return `<div class="fg">
     <label class="f w2">Como definir a tarifa<select id="ta_modo" ${srv?'':''}><option value="automatica" ${auto?'selected':''}>Automática: ANEEL · Equatorial RS (padrão)</option><option value="manual" ${auto?'':'selected'}>Manual</option></select></label>
     <label class="f">Tarifa com impostos (R$/kWh)<input id="ta_tarifa" type="number" step="0.0001" value="${esc(c.tarifa)}" ${auto&&srv?'readonly':''}></label>
@@ -4023,6 +4040,7 @@ function salvarConfig(){
   c.pagto=c.pagto||{};document.querySelectorAll('[data-pg]').forEach(i=>c.pagto[i.dataset.pg]=num(i.value));
   c.pagina=c.pagina||{};document.querySelectorAll('[data-pa]').forEach(i=>c.pagina[i.dataset.pa]=i.value.trim());
   c.ct=ctCfg();document.querySelectorAll('[data-ct]').forEach(i=>c.ct[i.dataset.ct]=i.dataset.ctn?num(i.value):i.value.trim());
+  if(document.getElementById('cfg_vend_emite'))c.vendedorEmite=document.getElementById('cfg_vend_emite').checked;
   if(document.getElementById('ta_modo')){const ta=Object.assign({},c.tarifaAuto||{}),modo=document.getElementById('ta_modo').value;
     c.tarifaAuto=Object.assign(ta,{modo,icms:num(document.getElementById('ta_icms').value),pisCofins:num(document.getElementById('ta_pis').value)});
     if(modo==='manual')c.tarifa=num(document.getElementById('ta_tarifa').value)}

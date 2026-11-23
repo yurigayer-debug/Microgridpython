@@ -15,8 +15,14 @@ const path = require('path');
 
 const PORTA = +process.env.PORT || 8080;
 const URL_PUBLICA = (process.env.PUBLIC_URL || `http://localhost:${PORTA}`).replace(/\/+$/, '') + '/';
+// CRM_USUARIOS = "email:senha" ou "email:senha#vendedor" (sem sufixo = gestor), separados por vírgula
+const USUARIOS_PAPEL = {};
 const USUARIOS = Object.fromEntries(String(process.env.CRM_USUARIOS || 'admin@deltasolar.local:troque-esta-senha')
-  .split(',').map(s => s.trim()).filter(Boolean).map(s => { const i = s.lastIndexOf(':'); return [s.slice(0, i), s.slice(i + 1)]; }));
+  .split(',').map(s => s.trim()).filter(Boolean).map(s => {
+    let papel = 'gestor'; const m = /#(\w+)$/.exec(s); if (m) { papel = m[1]; s = s.slice(0, m.index); }
+    const i = s.lastIndexOf(':'); USUARIOS_PAPEL[s.slice(0, i)] = papel; return [s.slice(0, i), s.slice(i + 1)];
+  }));
+const papelDe = u => USUARIOS_PAPEL[u] || 'gestor';
 const COLS = ['clientes', 'kits', 'negocios', 'propostas', 'usinas', 'contratos', 'titulos', 'visitas', 'contratosVenda'];
 const PUBLICAS = new Set(['aceitarPublico', 'recusarPublico', 'assinarContratoPublico']);
 const INDEX = path.join(__dirname, 'index.html');
@@ -208,7 +214,7 @@ const FUN = {
     const dados = {}; for (const c of COLS) dados[c] = await lerCol(c);
     const cf = await db.query("select dados from config where chave='config'");
     const pf = await db.query('select dados from perfis where usuario=$1', [u]);
-    return { usuario: u, dados, config: cf.rows[0] ? cf.rows[0].dados : null, perfil: pf.rows[0] ? pf.rows[0].dados : null, urlPublica: URL_PUBLICA, links: {} };
+    return { usuario: u, papel: papelDe(u), dados, config: cf.rows[0] ? cf.rows[0].dados : null, perfil: pf.rows[0] ? pf.rows[0].dados : null, urlPublica: URL_PUBLICA, links: {} };
   },
   async salvarAlteracoes(u, ch) {
     return transacao(async q => {
@@ -225,6 +231,9 @@ const FUN = {
             const premissasMudaram = Object.keys(atual.parametros || {}).some(k => canon((o.parametros || {})[k]) !== canon(atual.parametros[k]));
             const mudou = canon(o.snap) !== canon(atual.snap) || premissasMudaram;
             if (mudou && !reemissao) throw new Error('Proposta enviada ao cliente: o conteúdo está bloqueado. Use Nova versão.');
+          }
+          if (col === 'propostas' && atual && atual.status === 'rascunho' && o.status && o.status !== 'rascunho' && papelDe(u) === 'vendedor') {
+            const cfgAtual = await lerCfg(); if (cfgAtual.vendedorEmite === false) throw new Error('Seu perfil não pode emitir propostas. Peça ao gestor para emitir.');
           }
           if (col === 'propostas' && atual) {
             for (const k of ['status', 'modoPreco', 'margem', 'markup', 'precoWp', 'preco', 'desconto', 'parcela', 'validade', 'tipoProposta', 'templateId', 'emissoes'])
