@@ -126,6 +126,66 @@ function formaNome(op, f) { f = String(f || 'obra'); if (f === 'pix') return 'PI
 const pubProp = p => ({ snap: p.snap, status: p.status, aceite: p.aceite || null });
 const pubCt = c => ({ snap: c.snap, status: c.status, assin: c.assin || {} });
 
+/* ---------------- tarifa de energia (ANEEL, dados abertos) ----------------
+   Fonte: CSV de tarifas das distribuidoras (dados abertos da ANEEL). A Equatorial RS aparece como CEEE-Equatorial.
+   Defina TARIFA_CSV_URL no .env com o endereço do CSV. Valores da ANEEL vêm em R$/MWh; aqui convertemos para R$/kWh. */
+const TARIFA_CSV_URL = process.env.TARIFA_CSV_URL || '';
+async function lerCfg() { const r = await db.query("select dados from config where chave='config'"); return ((r.rows[0] || {}).dados || {}).cfg || {}; }
+async function gravarCfgParcial(parcial) {
+  const r = await db.query("select dados from config where chave='config'"); const d = (r.rows[0] || {}).dados || {};
+  d.cfg = Object.assign({}, d.cfg || {}, parcial);
+  await db.query(`insert into config(chave,dados) values('config',$1) on conflict(chave) do update set dados=excluded.dados,atualizado_em=now()`, [d]);
+}
+/* Lê o CSV e devolve a tarifa B1 residencial convencional vigente (TUSD + TE), sem impostos, em R$/kWh */
+function tarifaDoCsv(texto, hojeIso) {
+  const linhas = texto.split(/\r?\n/).filter(l => l.trim()); if (linhas.length < 2) throw new Error('CSV de tarifas vazio');
+  const sep = linhas[0].includes(';') ? ';' : ',';
+  const cab = linhas[0].split(sep).map(x => x.trim().replace(/^"|"$/g, ''));
+  const pos = n => cab.indexOf(n);
+  const col = { ag: pos('SigAgente'), ini: pos('DatInicioVigencia'), fim: pos('DatFimVigencia'), grupo: pos('DscSubGrupo'), classe: pos('DscClasseConsumidor'), mod: pos('DscModalidadeTarifaria'), tusd: pos('VlrTUSD'), te: pos('VlrTE'), det: pos('DscDetalhe') };
+  const falta = Object.keys(col).filter(k => col[k] < 0); if (falta.length) throw new Error('CSV sem as colunas esperadas: ' + falta.join(', '));
+  const numBr = v => parseFloat(String(v || '').replace(/"/g, '').replace(/\./g, '').replace(',', '.'));
+  const sigla = { v: null };
+  for (const l of linhas.slice(1)) {
+    const c = l.split(sep).map(x => x.trim().replace(/^"|"$/g, ''));
+    const ag = c[col.ag] || '';
+    if (!/CEEE|EQUATORIAL/i.test(ag)) continue;
+    if ((c[col.grupo] || '').toUpperCase() !== 'B1') continue;
+    if (!/residencial/i.test(c[col.classe] || '') || !/convencional/i.test(c[col.mod] || '')) continue;
+    if (/ponta/i.test(c[col.det] || '')) continue;
+    const ini = c[col.ini] || '', fim = c[col.fim] || '';
+    if (ini > hojeIso || (fim && fim < hojeIso)) continue;
+    let tusd = numBr(c[col.tusd]), te = numBr(c[col.te]);
+    if (!(tusd > 0 || te > 0)) continue;
+    if (tusd > 5) tusd /= 1000; if (te > 5) te /= 1000;   // R$/MWh -> R$/kWh
+    sigla.v = { sem: tusd + te, sigla: ag, inicio: ini };
+  }
+  if (!sigla.v) throw new Error('Nenhuma tarifa B1 residencial convencional vigente para a Equatorial RS no CSV');
+  return { semImpostos: Math.round(sigla.v.sem * 10000) / 10000, sigla: sigla.v.sigla, inicio: sigla.v.inicio };
+}
+async function atualizarTarifaAneel(imp) {
+  if (!TARIFA_CSV_URL) throw new Error('Fonte não configurada: defina TARIFA_CSV_URL no .env (CSV de tarifas da ANEEL).');
+  const r = await fetch(TARIFA_CSV_URL, { headers: { 'User-Agent': 'Delta-CRM/1.0' } });
+  if (!r.ok) throw new Error('A fonte respondeu HTTP ' + r.status);
+  const t = tarifaDoCsv(await r.text(), hoje());
+  // Aproximação: ICMS e PIS/COFINS "por dentro" sobre a tarifa. Confirmar as alíquotas vigentes.
+  const tarifa = Math.round(t.semImpostos / (1 - (imp.icms + imp.pisCofins) / 100) * 10000) / 10000;
+  return { tarifa, semImpostos: t.semImpostos, icms: imp.icms, pisCofins: imp.pisCofins, obtidoEm: agora(),
+    fonte: `ANEEL · ${t.sigla} · B1 residencial convencional · vigência desde ${t.inicio}` };
+}
+async function aplicarTarifa(imp) {
+  const r = await atualizarTarifaAneel(imp);
+  const ta = (await lerCfg()).tarifaAuto || {};
+  await gravarCfgParcial({ tarifa: r.tarifa, tarifaAuto: Object.assign({}, ta, { modo: 'automatica', icms: r.icms, pisCofins: r.pisCofins, fonte: r.fonte, obtidoEm: r.obtidoEm, erro: '' }) });
+  return r;
+}
+/* Atualização diária (só quando o modo é automático). Se falhar, mantém o último valor e registra o erro. */
+async function tarifaDiaria() {
+  const ta = (await lerCfg()).tarifaAuto || {}; if (ta.modo === 'manual') return;
+  try { await aplicarTarifa({ icms: num(ta.icms ?? 25), pisCofins: num(ta.pisCofins ?? 5) }); }
+  catch (e) { console.warn('Tarifa:', e.message); await gravarCfgParcial({ tarifaAuto: Object.assign({}, ta, { erro: String(e.message).slice(0, 200), tentadoEm: agora() }) }).catch(() => {}); }
+}
+
 /* Depois da assinatura do cliente: PDF, link guardado e e-mails. Roda fora da resposta; se falhar, a assinatura já está salva. */
 async function posAssinatura(c) {
   try {
@@ -188,7 +248,16 @@ const FUN = {
       }
       for (const [col, ids] of Object.entries(ch.deletes || {})) for (const id of ids)
         await q.query('update registros set excluido=true,atualizado_em=now(),atualizado_por=$3 where colecao=$1 and id=$2', [col, id, u]);
-      if (ch.config) await q.query(`insert into config(chave,dados) values('config',$1) on conflict(chave) do update set dados=excluded.dados,atualizado_em=now()`, [ch.config]);
+      if (ch.config) {
+        const cur = ((await q.query("select dados from config where chave='config'")).rows[0] || {}).dados || {};
+        const novo = JSON.parse(JSON.stringify(ch.config)), cc = cur.cfg || {};
+        if (novo.cfg && cc.tarifaAuto) { // campos que só o servidor preenche
+          const ta = novo.cfg.tarifaAuto || {};
+          novo.cfg.tarifaAuto = Object.assign({}, ta, { fonte: cc.tarifaAuto.fonte, obtidoEm: cc.tarifaAuto.obtidoEm, erro: cc.tarifaAuto.erro });
+          if ((ta.modo || 'automatica') === 'automatica' && cc.tarifa != null) novo.cfg.tarifa = cc.tarifa;
+        }
+        await q.query(`insert into config(chave,dados) values('config',$1) on conflict(chave) do update set dados=excluded.dados,atualizado_em=now()`, [novo]);
+      }
       log(u, 'salvar', Object.keys(ch.upserts || {}).join(','));
       return { nums };
     });
@@ -279,6 +348,11 @@ const FUN = {
     if (to) await enviarEmail({ to, subject: `Contrato ${c.snap.codigo} concluído — via assinada`, text: `Olá! Segue a via do contrato ${c.snap.codigo} assinada pelas duas partes.`, attachments: p ? [{ filename: p.nome, content: p.pdf }] : [] });
     return { ok: true, pdfUrl: c.pdfUrl || '' };
   },
+  async atualizarTarifa(u, imp) {
+    const ta = (await lerCfg()).tarifaAuto || {};
+    const i = { icms: num(imp && imp.icms != null ? imp.icms : (ta.icms ?? 25)), pisCofins: num(imp && imp.pisCofins != null ? imp.pisCofins : (ta.pisCofins ?? 5)) };
+    const r = await aplicarTarifa(i); log(u, 'tarifa', `${r.tarifa} · ${r.fonte}`); return r;
+  },
   async enviarContratoEmail(u, d) {
     const c = await lerReg('contratosVenda', d.id); if (!c || !c.snap) throw new Error('Gere o contrato (Enviar para assinatura) antes do e-mail');
     const r = await db.query('select html from contratos_html where id=$1', [c.id]);
@@ -347,5 +421,6 @@ app.post('/api/:fn', async (req, res) => {
 app.use((e, req, res, next) => { console.error(e); res.status(500).send('Erro interno'); });
 
 iniciarBanco().then(() => app.listen(PORTA, () => {
+  setTimeout(tarifaDiaria, 15000); setInterval(tarifaDiaria, 24 * 3600e3);
   console.log(`Delta CRM em ${URL_PUBLICA} · usuários: ${Object.keys(USUARIOS).join(', ')} · e-mail: ${smtp ? process.env.SMTP_HOST : 'desligado'} · PDF: ${process.env.GOTENBERG_URL || 'desligado'}`);
 })).catch(e => { console.error('Falha ao iniciar:', e); process.exit(1); });

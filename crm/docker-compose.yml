@@ -12,6 +12,7 @@ services:
       DATABASE_URL: postgres://crm:${POSTGRES_PASSWORD}@db:5432/crm
       GOTENBERG_URL: http://pdf:3000
       BACKUP_DIR: /backups
+      TARIFA_CSV_URL: ${TARIFA_CSV_URL:-}
     ports: ["8080:8080"]
     volumes: ["./backups:/backups"]
     depends_on:
