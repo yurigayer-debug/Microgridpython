@@ -154,14 +154,15 @@ function tarifaDoCsv(texto, hojeIso) {
     if (!/residencial/i.test(c[col.classe] || '') || !/convencional/i.test(c[col.mod] || '')) continue;
     if (/ponta/i.test(c[col.det] || '')) continue;
     const ini = c[col.ini] || '', fim = c[col.fim] || '';
-    if (ini > hojeIso || (fim && fim < hojeIso)) continue;
+    if (fim && fim < hojeIso) continue;               // já encerrada
     let tusd = numBr(c[col.tusd]), te = numBr(c[col.te]);
     if (!(tusd > 0 || te > 0)) continue;
     if (tusd > 5) tusd /= 1000; if (te > 5) te /= 1000;   // R$/MWh -> R$/kWh
-    sigla.v = { sem: tusd + te, sigla: ag, inicio: ini };
+    // Vale o reajuste mais recente anunciado (mesmo que ainda não esteja em vigor)
+    if (!sigla.v || ini >= sigla.v.inicio) sigla.v = { sem: tusd + te, sigla: ag, inicio: ini };
   }
   if (!sigla.v) throw new Error('Nenhuma tarifa B1 residencial convencional vigente para a Equatorial RS no CSV');
-  return { semImpostos: Math.round(sigla.v.sem * 10000) / 10000, sigla: sigla.v.sigla, inicio: sigla.v.inicio };
+  return { semImpostos: Math.round(sigla.v.sem * 10000) / 10000, sigla: sigla.v.sigla, inicio: sigla.v.inicio, anunciada: sigla.v.inicio > hojeIso };
 }
 async function atualizarTarifaAneel(imp) {
   if (!TARIFA_CSV_URL) throw new Error('Fonte não configurada: defina TARIFA_CSV_URL no .env (CSV de tarifas da ANEEL).');
@@ -171,7 +172,8 @@ async function atualizarTarifaAneel(imp) {
   // Aproximação: ICMS e PIS/COFINS "por dentro" sobre a tarifa. Confirmar as alíquotas vigentes.
   const tarifa = Math.round(t.semImpostos / (1 - (imp.icms + imp.pisCofins) / 100) * 10000) / 10000;
   return { tarifa, semImpostos: t.semImpostos, icms: imp.icms, pisCofins: imp.pisCofins, obtidoEm: agora(),
-    fonte: `ANEEL · ${t.sigla} · B1 residencial convencional · vigência desde ${t.inicio}` };
+    anunciada: t.anunciada, vigencia: t.inicio,
+    fonte: `ANEEL · ${t.sigla} · B1 residencial convencional · ${t.anunciada ? 'reajuste anunciado para vigorar em' : 'vigente desde'} ${t.inicio.split('-').reverse().join('/')}` };
 }
 async function aplicarTarifa(imp) {
   const r = await atualizarTarifaAneel(imp);

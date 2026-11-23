@@ -2115,7 +2115,7 @@ function viewVendedor(p,ro){
       <div class="fg">${inp(p,'nome','Nome do cliente *','text','class="w2"')}${inp(p,'fone','WhatsApp','tel')}${inp(p,'cidade','Cidade','text')}</div>
       <h3 style="margin-top:16px">Consumo e ligação</h3>
       ${p.modoConsumo==='mensal'?'<div class="hint" style="margin-bottom:10px">Esta cotação usa consumo mês a mês. Digite a média aqui para usar o modo vendedor, ou ajuste no modo completo.</div>':''}
-      <div class="fg">${inp(p,'consumoMedio','Consumo médio (kWh/mês) *')}${inp(p,'tarifa','Tarifa (R$/kWh) *')}
+      <div class="fg">${inp(p,'consumoMedio','Consumo médio (kWh/mês) *')}${inp(p,'tarifa','Tarifa B1 com impostos (R$/kWh) *')}
         <label class="f">Ligação<select data-f="ligacao" data-rerender="1">${[['mono','Monofásica'],['bi','Bifásica'],['tri','Trifásica']].map(([v,l])=>`<option value="${v}" ${p.ligacao===v?'selected':''}>${l}</option>`).join('')}</select></label></div>
       <h3 style="margin-top:16px">Módulo e kit</h3>
       <label class="f">Potência do módulo FV disponível (Wp) *<input data-f="modWp" type="number" step="1" placeholder="ex.: 610" value="${p.modWpInformado?esc(p.modWp):''}"></label>
@@ -2124,7 +2124,15 @@ function viewVendedor(p,ro){
       <div id="sugBloco">${sugBlocoHtml(p)}</div>
       <h3 style="margin-top:16px">Preço</h3>
       ${formaPrecoBloco(p)}
-      <details style="margin-top:14px"><summary class="small" style="cursor:pointer;font-weight:700">Validade</summary><div class="fg" style="margin-top:8px">${inp(p,'validade','Validade (dias)')}</div></details>
+      <details style="margin-top:14px"><summary class="small" style="cursor:pointer;font-weight:700">Mais opções (opcional)</summary>
+        <div class="fg" style="margin-top:8px">${inp(p,'doc','CPF / CNPJ','text')}${inp(p,'email','E-mail','email')}
+          <label class="f">Perfil de consumo<select data-f="perfil" data-rerender="1">${Object.entries(PERFIS).map(([k,v])=>`<option value="${k}" ${p.perfil===k?'selected':''}>${v}</option>`).join('')}</select></label>
+          ${inp(p,'simult','Energia usada na hora da geração (%)')}
+          ${inp(p,'azim','Desvio do Norte do telhado (°): 0 = Norte')}${inp(p,'incl','Inclinação do telhado (°)')}
+          ${inp(p,'entrada','Entrada do financiamento (R$)')}${inp(p,'validade','Validade (dias)')}</div>
+        <div class="small muted" style="margin:12px 0 6px">Formas de pagamento oferecidas ao cliente</div>
+        <div class="row" style="flex-wrap:wrap;gap:12px">${(()=>{const g=pagtoDe(p).formas||{};return [['pix','PIX à vista'],['cartao','Cartão'],['obra','Parcelas da obra'],['fin','Financiamento']].map(([k,l])=>`<label class="small" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-f="pg.f_${k}" ${g[k]!==false?'checked':''}> ${l}</label>`).join('')})()}</div>
+      </details>
     </div>
     <div class="card sum" id="sumbox">${sumHtml(p)}</div>
   </div>
